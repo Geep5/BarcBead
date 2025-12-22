@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e:*)",
+      "Bash(npm install:*)",
+      "Bash(where:*)",
+      "Bash(go version:*)",
+      "Bash(powershell -Command \"irm https://raw.githubusercontent.com/steveyegge/beads/main/install.ps1 | iex\")",
+      "Bash(curl:*)",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" init)",
+      "Bash(git init:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
+    ]
+  }
+}

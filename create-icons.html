@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Generate Barc Icons</title>
+</head>
+<body>
+  <h1>Barc Icon Generator</h1>
+  <p>Right-click each canvas and "Save Image As" to save the icons</p>
+
+  <h3>16x16</h3>
+  <canvas id="icon16" width="16" height="16"></canvas>
+
+  <h3>48x48</h3>
+  <canvas id="icon48" width="48" height="48"></canvas>
+
+  <h3>128x128</h3>
+  <canvas id="icon128" width="128" height="128"></canvas>
+
+  <script>
+    function drawIcon(canvas) {
+      const ctx = canvas.getContext('2d');
+      const size = canvas.width;
+      const center = size / 2;
+
+      // Background circle
+      ctx.beginPath();
+      ctx.arc(center, center, size * 0.44, 0, Math.PI * 2);
+      ctx.fillStyle = '#e94560';
+      ctx.fill();
+
+      // Inner circle (white)
+      ctx.beginPath();
+      ctx.arc(center, center, size * 0.2, 0, Math.PI * 2);
+      ctx.fillStyle = 'white';
+      ctx.fill();
+    }
+
+    drawIcon(document.getElementById('icon16'));
+    drawIcon(document.getElementById('icon48'));
+    drawIcon(document.getElementById('icon128'));
+  </script>
+</body>
+</html>

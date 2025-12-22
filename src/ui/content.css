@@ -1,0 +1,240 @@
+/* Barc floating widget styles - scoped to avoid conflicts */
+
+#barc-widget {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 2147483647;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+#barc-widget * {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* Floating action button */
+.barc-fab {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #e94560, #ff6b6b);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 20px rgba(233, 69, 96, 0.4);
+  transition: all 0.3s ease;
+  position: relative;
+}
+
+.barc-fab:hover {
+  transform: scale(1.1);
+  box-shadow: 0 6px 25px rgba(233, 69, 96, 0.5);
+}
+
+.barc-fab.active {
+  transform: scale(0.9);
+  opacity: 0.7;
+}
+
+.barc-fab-icon {
+  font-size: 24px;
+}
+
+.barc-fab-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 20px;
+  height: 20px;
+  background: #4ade80;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+}
+
+/* Chat panel */
+.barc-panel {
+  position: absolute;
+  bottom: 70px;
+  right: 0;
+  width: 320px;
+  height: 400px;
+  background: #1a1a2e;
+  border-radius: 16px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #2a2a4a;
+}
+
+.barc-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: #16213e;
+  border-bottom: 1px solid #2a2a4a;
+}
+
+.barc-title {
+  font-weight: 600;
+  color: #eaeaea;
+  font-size: 15px;
+}
+
+.barc-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.barc-user-count {
+  font-size: 12px;
+  color: #a0a0a0;
+}
+
+.barc-close {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: #a0a0a0;
+  font-size: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+}
+
+.barc-close:hover {
+  background: #2a2a4a;
+  color: #eaeaea;
+}
+
+/* Messages area */
+.barc-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.barc-info {
+  text-align: center;
+  color: #6a6a8a;
+  font-size: 13px;
+  padding: 20px;
+  cursor: pointer;
+}
+
+.barc-info:hover {
+  color: #a0a0a0;
+}
+
+.barc-msg {
+  max-width: 85%;
+  padding: 8px 12px;
+  background: #16213e;
+  border-radius: 12px;
+  color: #eaeaea;
+}
+
+.barc-msg.own {
+  align-self: flex-end;
+  background: #e94560;
+}
+
+.barc-msg-author {
+  display: block;
+  font-size: 11px;
+  color: #6a6a8a;
+  margin-bottom: 4px;
+}
+
+.barc-msg.own .barc-msg-author {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.barc-msg-text {
+  display: block;
+  font-size: 14px;
+  word-break: break-word;
+}
+
+/* Input area */
+.barc-input-area {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  background: #16213e;
+  border-top: 1px solid #2a2a4a;
+}
+
+.barc-input-area input {
+  flex: 1;
+  padding: 10px 14px;
+  background: #0f3460;
+  border: 1px solid #2a2a4a;
+  border-radius: 20px;
+  color: #eaeaea;
+  font-size: 14px;
+  outline: none;
+}
+
+.barc-input-area input:focus {
+  border-color: #e94560;
+}
+
+.barc-input-area input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.barc-input-area button {
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: #e94560;
+  color: white;
+  font-size: 16px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.barc-input-area button:hover:not(:disabled) {
+  background: #ff6b6b;
+}
+
+.barc-input-area button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Scrollbar */
+.barc-messages::-webkit-scrollbar {
+  width: 4px;
+}
+
+.barc-messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.barc-messages::-webkit-scrollbar-thumb {
+  background: #2a2a4a;
+  border-radius: 2px;
+}

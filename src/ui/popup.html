@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Barc</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header class="header">
+      <div class="logo">
+        <span class="logo-icon">◉</span>
+        <span class="logo-text">Barc</span>
+      </div>
+      <div class="status">
+        <span id="connection-status" class="status-dot disconnected"></span>
+        <span id="user-count">0</span>
+      </div>
+    </header>
+
+    <!-- Setup screen (shown first time) -->
+    <div id="setup-screen" class="screen hidden">
+      <div class="setup-content">
+        <h2>Welcome to Barc</h2>
+        <p>Chat with others viewing the same page</p>
+        <div class="input-group">
+          <label for="username-input">Your display name</label>
+          <input type="text" id="username-input" placeholder="Enter a name..." maxlength="20">
+        </div>
+        <button id="start-btn" class="btn primary">Start Chatting</button>
+        <p class="small">Powered by Nostr - fully decentralized</p>
+      </div>
+    </div>
+
+    <!-- Main chat screen -->
+    <div id="chat-screen" class="screen hidden">
+      <!-- Page info bar -->
+      <div class="page-info">
+        <span class="page-icon">🌐</span>
+        <span id="page-url" class="page-url">Loading...</span>
+        <button id="toggle-channel" class="btn small" title="Join/Leave channel">
+          Join
+        </button>
+      </div>
+
+      <!-- Users bar -->
+      <div class="users-bar">
+        <span class="users-label">Here now:</span>
+        <div id="users-list" class="users-list">
+          <span class="no-users">No one else here yet</span>
+        </div>
+      </div>
+
+      <!-- Messages area -->
+      <div id="messages" class="messages">
+        <div class="welcome-msg">
+          <p>Join the channel to chat with others on this page</p>
+        </div>
+      </div>
+
+      <!-- Input area -->
+      <div class="input-area">
+        <input type="text" id="message-input" placeholder="Type a message..." disabled>
+        <button id="send-btn" class="btn icon" disabled>
+          <span>→</span>
+        </button>
+      </div>
+
+      <!-- Future: WebRTC controls placeholder -->
+      <div class="call-controls hidden">
+        <button id="voice-call-btn" class="btn icon" title="Voice call (coming soon)" disabled>
+          🎤
+        </button>
+        <button id="video-call-btn" class="btn icon" title="Video call (coming soon)" disabled>
+          📹
+        </button>
+      </div>
+    </div>
+
+    <!-- Settings (shown via toggle) -->
+    <div id="settings-screen" class="screen hidden">
+      <h3>Settings</h3>
+      <div class="input-group">
+        <label>Display Name</label>
+        <input type="text" id="settings-name" maxlength="20">
+      </div>
+      <div class="input-group">
+        <label>Your Public Key</label>
+        <input type="text" id="pubkey-display" readonly>
+      </div>
+      <button id="save-settings" class="btn primary">Save</button>
+      <button id="close-settings" class="btn">Back</button>
+    </div>
+
+    <!-- Settings toggle -->
+    <button id="settings-toggle" class="settings-btn" title="Settings">⚙</button>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
