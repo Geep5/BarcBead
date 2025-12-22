@@ -147,6 +147,15 @@ async function initClient(privateKey = null) {
     broadcastToAll({ type: 'GLOBAL_ACTIVITY', activity });
   });
 
+  nostrClient.onDM((dm, otherPubkey) => {
+    // Increment unread if popup closed and not our own message
+    if (!popupOpen && !dm.isOwn) {
+      unreadCount++;
+      updateBadge();
+    }
+    broadcastToAll({ type: 'NEW_DM', dm, otherPubkey });
+  });
+
   return nostrClient;
 }
 
@@ -259,6 +268,26 @@ async function handleMessage(request, sender) {
       }
       const event = await nostrClient.sendMessage(request.content);
       return { success: !!event, eventId: event?.id };
+    }
+
+    case 'SEND_DM': {
+      if (!nostrClient) {
+        return { error: 'Not connected' };
+      }
+      const event = await nostrClient.sendDM(request.recipientPubkey, request.content);
+      return { success: !!event, eventId: event?.id };
+    }
+
+    case 'GET_DM_CONVERSATIONS': {
+      return {
+        conversations: nostrClient?.getDMConversations() || []
+      };
+    }
+
+    case 'GET_DM_CONVERSATION': {
+      return {
+        messages: nostrClient?.getDMConversation(request.pubkey) || []
+      };
     }
 
     case 'SET_USERNAME': {

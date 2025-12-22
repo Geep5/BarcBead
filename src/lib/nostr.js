@@ -155,6 +155,104 @@ function xorHex(a, b) {
   return result;
 }
 
+// NIP-04: Encrypted Direct Messages
+// Uses ECDH to derive shared secret, then AES-256-CBC
+
+// Compute ECDH shared point (privateKey * recipientPubKey)
+function computeSharedPoint(privateKeyHex, recipientPubKeyHex) {
+  const privateKey = BigInt('0x' + privateKeyHex);
+  // Recipient pubkey is x-coordinate only, need to recover y
+  const x = BigInt('0x' + recipientPubKeyHex);
+  // y² = x³ + 7 (secp256k1)
+  const y2 = mod(mod(x * x * x, CURVE.p) + 7n, CURVE.p);
+  // Compute sqrt using Tonelli-Shanks (p ≡ 3 mod 4 for secp256k1)
+  let y = modPow(y2, (CURVE.p + 1n) / 4n, CURVE.p);
+  // Choose even y (standard convention for ECDH)
+  if (y % 2n !== 0n) {
+    y = CURVE.p - y;
+  }
+  const recipientPoint = [x, y];
+  const sharedPoint = pointMultiply(privateKey, recipientPoint);
+  return sharedPoint[0].toString(16).padStart(64, '0');
+}
+
+// Modular exponentiation
+function modPow(base, exp, mod) {
+  let result = 1n;
+  base = base % mod;
+  while (exp > 0n) {
+    if (exp % 2n === 1n) {
+      result = (result * base) % mod;
+    }
+    exp = exp / 2n;
+    base = (base * base) % mod;
+  }
+  return result;
+}
+
+// Encrypt message using NIP-04 (AES-256-CBC)
+async function nip04Encrypt(privateKeyHex, recipientPubKeyHex, plaintext) {
+  const sharedX = computeSharedPoint(privateKeyHex, recipientPubKeyHex);
+  const sharedSecret = hexToBytes(sharedX);
+
+  // Generate random IV (16 bytes)
+  const iv = crypto.getRandomValues(new Uint8Array(16));
+
+  // Import shared secret as AES key
+  const key = await crypto.subtle.importKey(
+    'raw',
+    sharedSecret,
+    { name: 'AES-CBC' },
+    false,
+    ['encrypt']
+  );
+
+  // Encrypt
+  const plaintextBytes = new TextEncoder().encode(plaintext);
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-CBC', iv },
+    key,
+    plaintextBytes
+  );
+
+  // Format: base64(ciphertext)?iv=base64(iv)
+  const ciphertextB64 = btoa(String.fromCharCode(...new Uint8Array(ciphertext)));
+  const ivB64 = btoa(String.fromCharCode(...iv));
+
+  return `${ciphertextB64}?iv=${ivB64}`;
+}
+
+// Decrypt message using NIP-04 (AES-256-CBC)
+async function nip04Decrypt(privateKeyHex, senderPubKeyHex, encryptedContent) {
+  const sharedX = computeSharedPoint(privateKeyHex, senderPubKeyHex);
+  const sharedSecret = hexToBytes(sharedX);
+
+  // Parse format: base64(ciphertext)?iv=base64(iv)
+  const [ciphertextB64, ivPart] = encryptedContent.split('?iv=');
+  if (!ivPart) throw new Error('Invalid NIP-04 format');
+
+  const ciphertext = Uint8Array.from(atob(ciphertextB64), c => c.charCodeAt(0));
+  const iv = Uint8Array.from(atob(ivPart), c => c.charCodeAt(0));
+
+  // Import shared secret as AES key
+  const key = await crypto.subtle.importKey(
+    'raw',
+    sharedSecret,
+    { name: 'AES-CBC' },
+    false,
+    ['decrypt']
+  );
+
+  // Decrypt
+  const plaintextBytes = await crypto.subtle.decrypt(
+    { name: 'AES-CBC', iv },
+    key,
+    ciphertext
+  );
+
+  return new TextDecoder().decode(plaintextBytes);
+}
+
 async function createEvent(privateKey, kind, content, tags = []) {
   const pubkey = getPublicKey(privateKey);
   const created_at = Math.floor(Date.now() / 1000);
@@ -318,7 +416,9 @@ class BarcNostrClient {
     this.messageCallback = null;
     this.presenceCallback = null;
     this.globalActivityCallback = null;
+    this.dmCallback = null;
     this.users = new Map(); // pubkey -> { name, lastSeen }
+    this.dmConversations = new Map(); // pubkey -> [messages]
     this.globalActivity = new Map(); // url -> { users: Map, lastUpdate }
   }
 
@@ -351,7 +451,158 @@ class BarcNostrClient {
     // Subscribe to global presence events to see activity across all URLs
     this.subscribeToGlobalActivity();
 
+    // Subscribe to DMs addressed to us
+    this.subscribeToDMs();
+
     return { privateKey: this.privateKey, publicKey: this.publicKey };
+  }
+
+  subscribeToDMs() {
+    // Subscribe to kind 4 (encrypted DM) events where we are the recipient
+    const filters = [
+      {
+        kinds: [4], // Encrypted DM
+        '#p': [this.publicKey], // Addressed to us
+        since: Math.floor(Date.now() / 1000) - 86400 // Last 24 hours
+      },
+      {
+        kinds: [4], // Encrypted DM
+        authors: [this.publicKey], // Sent by us (to show our own messages)
+        since: Math.floor(Date.now() / 1000) - 86400
+      }
+    ];
+
+    for (const relay of this.relays) {
+      relay.subscribe('barc-dms', filters, (event) => {
+        this.handleDMEvent(event);
+      });
+    }
+  }
+
+  async handleDMEvent(event) {
+    if (event.kind !== 4) return;
+
+    // Determine the other party in the conversation
+    const isFromMe = event.pubkey === this.publicKey;
+    let otherPubkey;
+
+    if (isFromMe) {
+      // Find recipient from p tag
+      const pTag = event.tags.find(t => t[0] === 'p');
+      if (!pTag) return;
+      otherPubkey = pTag[1];
+    } else {
+      otherPubkey = event.pubkey;
+    }
+
+    // Decrypt the message
+    let plaintext;
+    try {
+      plaintext = await nip04Decrypt(this.privateKey, otherPubkey, event.content);
+    } catch (error) {
+      console.error('Failed to decrypt DM:', error);
+      return;
+    }
+
+    const dm = {
+      id: event.id,
+      pubkey: event.pubkey,
+      otherPubkey,
+      content: plaintext,
+      timestamp: event.created_at * 1000,
+      isOwn: isFromMe
+    };
+
+    // Store in conversation
+    if (!this.dmConversations.has(otherPubkey)) {
+      this.dmConversations.set(otherPubkey, []);
+    }
+    const conversation = this.dmConversations.get(otherPubkey);
+
+    // Avoid duplicates
+    if (!conversation.find(m => m.id === dm.id)) {
+      conversation.push(dm);
+      conversation.sort((a, b) => a.timestamp - b.timestamp);
+
+      // Notify callback
+      if (this.dmCallback) {
+        this.dmCallback(dm, otherPubkey);
+      }
+    }
+  }
+
+  async sendDM(recipientPubkey, plaintext) {
+    if (!plaintext.trim()) return null;
+
+    // Encrypt the message
+    const encryptedContent = await nip04Encrypt(this.privateKey, recipientPubkey, plaintext);
+
+    // Create kind 4 event with p tag for recipient
+    const event = await createEvent(
+      this.privateKey,
+      4, // Encrypted DM kind
+      encryptedContent,
+      [['p', recipientPubkey]]
+    );
+
+    let published = false;
+    for (const relay of this.relays) {
+      if (relay.publish(event)) {
+        published = true;
+      }
+    }
+
+    if (!published) {
+      console.error('sendDM: Failed to publish to any relay');
+      return null;
+    }
+
+    // Add to our conversation immediately
+    const dm = {
+      id: event.id,
+      pubkey: this.publicKey,
+      otherPubkey: recipientPubkey,
+      content: plaintext,
+      timestamp: event.created_at * 1000,
+      isOwn: true
+    };
+
+    if (!this.dmConversations.has(recipientPubkey)) {
+      this.dmConversations.set(recipientPubkey, []);
+    }
+    this.dmConversations.get(recipientPubkey).push(dm);
+
+    if (this.dmCallback) {
+      this.dmCallback(dm, recipientPubkey);
+    }
+
+    return event;
+  }
+
+  getDMConversation(pubkey) {
+    return this.dmConversations.get(pubkey) || [];
+  }
+
+  getDMConversations() {
+    // Return list of conversations with last message
+    const conversations = [];
+    for (const [pubkey, messages] of this.dmConversations) {
+      if (messages.length > 0) {
+        const lastMessage = messages[messages.length - 1];
+        conversations.push({
+          pubkey,
+          name: this.getUserName(pubkey),
+          lastMessage: lastMessage.content,
+          timestamp: lastMessage.timestamp,
+          unread: messages.filter(m => !m.isOwn && !m.read).length
+        });
+      }
+    }
+    return conversations.sort((a, b) => b.timestamp - a.timestamp);
+  }
+
+  onDM(callback) {
+    this.dmCallback = callback;
   }
 
   subscribeToGlobalActivity() {

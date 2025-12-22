@@ -42,9 +42,10 @@
 
     <!-- Main chat screen -->
     <div id="chat-screen" class="screen hidden">
-      <!-- Tab bar for Chat/Activity -->
+      <!-- Tab bar for Chat/DMs/Activity -->
       <div class="tab-bar">
         <button id="tab-chat" class="tab active">Chat</button>
+        <button id="tab-dms" class="tab">DMs</button>
         <button id="tab-activity" class="tab">Activity</button>
       </div>
 
@@ -86,6 +87,31 @@
           📹
         </button>
       </div>
+      </div>
+
+      <!-- DMs view -->
+      <div id="dms-view" class="tab-content hidden">
+        <!-- DM conversations list -->
+        <div id="dm-conversations" class="dm-conversations">
+          <div class="no-dms">No conversations yet. Click on a user to start a DM.</div>
+        </div>
+
+        <!-- Active DM conversation (hidden by default) -->
+        <div id="dm-chat" class="dm-chat hidden">
+          <div class="dm-header">
+            <button id="dm-back" class="btn icon small">←</button>
+            <span id="dm-recipient-name">User</span>
+          </div>
+          <div id="dm-messages" class="messages">
+            <!-- DM messages will appear here -->
+          </div>
+          <div class="input-area">
+            <input type="text" id="dm-input" placeholder="Type a private message...">
+            <button id="dm-send-btn" class="btn icon">
+              <span>→</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- Activity view -->
