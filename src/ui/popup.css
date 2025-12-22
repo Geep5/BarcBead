@@ -436,6 +436,7 @@ body {
   z-index: 10;
 }
 
+
 .settings-btn:hover {
   background: var(--border);
   color: var(--text-primary);

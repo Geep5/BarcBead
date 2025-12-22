@@ -46,30 +46,25 @@
       <div class="page-info">
         <span class="page-icon">🌐</span>
         <span id="page-url" class="page-url">Loading...</span>
-        <button id="toggle-channel" class="btn small" title="Join/Leave channel">
-          Join
-        </button>
       </div>
 
       <!-- Users bar -->
       <div class="users-bar">
         <span class="users-label">Here now:</span>
         <div id="users-list" class="users-list">
-          <span class="no-users">No one else here yet</span>
+          <span class="no-users">Just you</span>
         </div>
       </div>
 
       <!-- Messages area -->
       <div id="messages" class="messages">
-        <div class="welcome-msg">
-          <p>Join the channel to chat with others on this page</p>
-        </div>
+        <!-- Messages will appear here -->
       </div>
 
       <!-- Input area -->
       <div class="input-area">
-        <input type="text" id="message-input" placeholder="Type a message..." disabled>
-        <button id="send-btn" class="btn icon" disabled>
+        <input type="text" id="message-input" placeholder="Type a message...">
+        <button id="send-btn" class="btn icon">
           <span>→</span>
         </button>
       </div>
@@ -83,6 +78,9 @@
           📹
         </button>
       </div>
+
+      <!-- Settings toggle (inside chat screen so it doesn't overlap setup) -->
+      <button id="settings-toggle" class="settings-btn" title="Settings">⚙</button>
     </div>
 
     <!-- Settings (shown via toggle) -->
@@ -99,9 +97,6 @@
       <button id="save-settings" class="btn primary">Save</button>
       <button id="close-settings" class="btn">Back</button>
     </div>
-
-    <!-- Settings toggle -->
-    <button id="settings-toggle" class="settings-btn" title="Settings">⚙</button>
   </div>
 
   <script src="popup.js"></script>

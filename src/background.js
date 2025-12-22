@@ -5,7 +5,10 @@ import { BarcNostrClient, generatePrivateKey, getPublicKey } from './lib/nostr.j
 
 let nostrClient = null;
 let currentTabUrl = null;
+let currentTabId = null;
 let userName = null;
+let unreadCount = 0;
+let popupOpen = false;
 
 // Bech32 decoding for nsec keys
 const BECH32_ALPHABET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
@@ -70,6 +73,29 @@ function parsePrivateKey(input) {
   return { error: 'Invalid key format. Use nsec1... or 64-char hex.' };
 }
 
+// Update the extension badge
+function updateBadge() {
+  if (unreadCount > 0) {
+    chrome.action.setBadgeText({ text: unreadCount > 99 ? '99+' : unreadCount.toString() });
+    chrome.action.setBadgeBackgroundColor({ color: '#e94560' });
+  } else {
+    // Show user count if no unread messages
+    const userCount = nostrClient?.getActiveUsers()?.length || 0;
+    if (userCount > 0) {
+      chrome.action.setBadgeText({ text: userCount.toString() });
+      chrome.action.setBadgeBackgroundColor({ color: '#4ade80' });
+    } else {
+      chrome.action.setBadgeText({ text: '' });
+    }
+  }
+}
+
+// Clear unread count
+function clearUnread() {
+  unreadCount = 0;
+  updateBadge();
+}
+
 // Initialize the Nostr client with an existing key
 async function initClient(privateKey = null) {
   // If we have a client and no new key, return existing
@@ -103,14 +129,44 @@ async function initClient(privateKey = null) {
 
   // Set up event handlers
   nostrClient.onMessage((msg) => {
+    // Increment unread count if popup is closed and message isn't ours
+    if (!popupOpen && !msg.isOwn) {
+      unreadCount++;
+      updateBadge();
+    }
     broadcastToAll({ type: 'NEW_MESSAGE', message: msg });
   });
 
   nostrClient.onPresence((users) => {
+    updateBadge();
     broadcastToAll({ type: 'PRESENCE_UPDATE', users });
   });
 
   return nostrClient;
+}
+
+// Auto-join channel for a URL
+async function autoJoinChannel(url) {
+  if (!url || url.startsWith('chrome://') || url.startsWith('chrome-extension://')) {
+    return;
+  }
+
+  const client = await initClient();
+  if (!client) return; // No key configured yet
+
+  // Leave previous channel if different URL
+  if (currentTabUrl && currentTabUrl !== url) {
+    client.leaveChannel();
+  }
+
+  currentTabUrl = url;
+  await client.joinChannel(url);
+
+  if (userName) {
+    await client.announcePresence(userName);
+  }
+
+  updateBadge();
 }
 
 // Broadcast message to popup and active tab
@@ -119,12 +175,9 @@ async function broadcastToAll(message) {
   chrome.runtime.sendMessage(message).catch(() => {});
 
   // Send to content script in active tab
-  try {
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tabs[0]) {
-      chrome.tabs.sendMessage(tabs[0].id, message).catch(() => {});
-    }
-  } catch {}
+  if (currentTabId) {
+    chrome.tabs.sendMessage(currentTabId, message).catch(() => {});
+  }
 }
 
 // Handle messages from popup and content scripts
@@ -154,6 +207,11 @@ async function handleMessage(request, sender) {
         // Initialize client with new key
         await initClient(privateKey);
 
+        // Auto-join current tab's channel
+        if (currentTabUrl) {
+          await autoJoinChannel(currentTabUrl);
+        }
+
         return { success: true, publicKey };
       } catch (error) {
         return { success: false, error: error.message };
@@ -175,33 +233,15 @@ async function handleMessage(request, sender) {
         // Initialize client with imported key
         await initClient(parsed.privateKey);
 
+        // Auto-join current tab's channel
+        if (currentTabUrl) {
+          await autoJoinChannel(currentTabUrl);
+        }
+
         return { success: true, publicKey };
       } catch (error) {
         return { success: false, error: 'Invalid private key' };
       }
-    }
-
-    case 'JOIN_CHANNEL': {
-      const client = await initClient();
-      if (!client) {
-        return { error: 'No key configured' };
-      }
-      currentTabUrl = request.url;
-      const channelId = await client.joinChannel(request.url);
-
-      if (userName) {
-        await client.announcePresence(userName);
-      }
-
-      return { channelId, users: client.getActiveUsers() };
-    }
-
-    case 'LEAVE_CHANNEL': {
-      if (nostrClient) {
-        nostrClient.leaveChannel();
-      }
-      currentTabUrl = null;
-      return { success: true };
     }
 
     case 'SEND_MESSAGE': {
@@ -227,7 +267,8 @@ async function handleMessage(request, sender) {
         channelId: nostrClient?.currentChannelId || null,
         url: currentTabUrl,
         users: nostrClient?.getActiveUsers() || [],
-        publicKey: nostrClient?.publicKey || null
+        publicKey: nostrClient?.publicKey || null,
+        unreadCount: unreadCount
       };
     }
 
@@ -240,27 +281,65 @@ async function handleMessage(request, sender) {
       }
     }
 
+    case 'POPUP_OPENED': {
+      popupOpen = true;
+      clearUnread();
+      return { success: true };
+    }
+
+    case 'POPUP_CLOSED': {
+      popupOpen = false;
+      return { success: true };
+    }
+
     default:
       return { error: 'Unknown message type' };
   }
 }
 
-// Listen for tab changes to update channel
+// Listen for tab activation - auto-join that tab's channel
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
   try {
+    currentTabId = activeInfo.tabId;
     const tab = await chrome.tabs.get(activeInfo.tabId);
-    if (tab.url && nostrClient && tab.url !== currentTabUrl) {
-      // Notify popup about tab change
-      chrome.runtime.sendMessage({ type: 'TAB_CHANGED', url: tab.url }).catch(() => {});
+    if (tab.url) {
+      await autoJoinChannel(tab.url);
+      broadcastToAll({ type: 'TAB_CHANGED', url: tab.url });
     }
   } catch {}
 });
 
-// Listen for URL changes in the active tab
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+// Listen for URL changes in the active tab - auto-join new channel
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.url && tab.active) {
-    chrome.runtime.sendMessage({ type: 'TAB_CHANGED', url: changeInfo.url }).catch(() => {});
+    currentTabId = tabId;
+    await autoJoinChannel(changeInfo.url);
+    broadcastToAll({ type: 'TAB_CHANGED', url: changeInfo.url });
   }
+});
+
+// Initialize on startup - join current tab's channel
+chrome.runtime.onStartup.addListener(async () => {
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tabs[0]?.url) {
+      currentTabId = tabs[0].id;
+      currentTabUrl = tabs[0].url;
+      await autoJoinChannel(tabs[0].url);
+    }
+  } catch {}
+});
+
+// Also init when extension is installed/updated
+chrome.runtime.onInstalled.addListener(async () => {
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tabs[0]?.url) {
+      currentTabId = tabs[0].id;
+      currentTabUrl = tabs[0].url;
+      await autoJoinChannel(tabs[0].url);
+    }
+  } catch {}
 });
 
 // Keep service worker alive with periodic alarm
@@ -270,5 +349,6 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'keepAlive' && nostrClient?.currentChannelId) {
     // Send presence update
     nostrClient.announcePresence(userName);
+    updateBadge();
   }
 });

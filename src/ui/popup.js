@@ -2,9 +2,7 @@
 
 class BarcPopup {
   constructor() {
-    this.isInChannel = false;
     this.currentUrl = null;
-    this.messages = [];
 
     // DOM elements
     this.setupScreen = document.getElementById('setup-screen');
@@ -18,7 +16,6 @@ class BarcPopup {
 
     // Chat elements
     this.pageUrl = document.getElementById('page-url');
-    this.toggleChannelBtn = document.getElementById('toggle-channel');
     this.usersList = document.getElementById('users-list');
     this.messagesContainer = document.getElementById('messages');
     this.messageInput = document.getElementById('message-input');
@@ -47,7 +44,6 @@ class BarcPopup {
     });
 
     // Chat
-    this.toggleChannelBtn.addEventListener('click', () => this.toggleChannel());
     this.sendBtn.addEventListener('click', () => this.sendMessage());
     this.messageInput.addEventListener('keypress', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
@@ -63,15 +59,23 @@ class BarcPopup {
 
     // Listen for messages from background
     chrome.runtime.onMessage.addListener((msg) => this.handleBackgroundMessage(msg));
+
+    // Notify background when popup closes
+    window.addEventListener('unload', () => {
+      this.sendToBackground({ type: 'POPUP_CLOSED' });
+    });
   }
 
   async init() {
+    // Tell background popup is open (clears unread badge)
+    await this.sendToBackground({ type: 'POPUP_OPENED' });
+
     // Initialize and get status
     const initResult = await this.sendToBackground({ type: 'INIT' });
     const status = await this.sendToBackground({ type: 'GET_STATUS' });
     const urlResult = await this.sendToBackground({ type: 'GET_CURRENT_URL' });
 
-    this.currentUrl = urlResult.url;
+    this.currentUrl = urlResult.url || status.url;
 
     // Check if user has a key set up
     const { privateKey } = await chrome.storage.local.get(['privateKey']);
@@ -119,7 +123,11 @@ class BarcPopup {
 
       if (result.success) {
         this.pubkeyDisplay.value = result.publicKey;
+        // Refresh status after key generation (will have auto-joined channel)
+        const status = await this.sendToBackground({ type: 'GET_STATUS' });
+        this.currentUrl = status.url;
         this.showScreen('chat');
+        this.updateUI(status);
         this.updatePageInfo();
       } else {
         alert('Failed to generate key: ' + (result.error || 'Unknown error'));
@@ -152,7 +160,11 @@ class BarcPopup {
       if (result.success) {
         this.pubkeyDisplay.value = result.publicKey;
         this.importKeyInput.value = '';
+        // Refresh status after key import (will have auto-joined channel)
+        const status = await this.sendToBackground({ type: 'GET_STATUS' });
+        this.currentUrl = status.url;
         this.showScreen('chat');
+        this.updateUI(status);
         this.updatePageInfo();
       } else {
         alert('Failed to import key: ' + (result.error || 'Invalid key format'));
@@ -180,66 +192,9 @@ class BarcPopup {
     }
   }
 
-  async toggleChannel() {
-    if (this.isInChannel) {
-      await this.leaveChannel();
-    } else {
-      await this.joinChannel();
-    }
-  }
-
-  async joinChannel() {
-    if (!this.currentUrl) return;
-
-    this.toggleChannelBtn.disabled = true;
-    this.toggleChannelBtn.textContent = 'Joining...';
-
-    try {
-      const result = await this.sendToBackground({
-        type: 'JOIN_CHANNEL',
-        url: this.currentUrl
-      });
-
-      this.isInChannel = true;
-      this.toggleChannelBtn.textContent = 'Leave';
-      this.toggleChannelBtn.classList.add('active');
-      this.messageInput.disabled = false;
-      this.sendBtn.disabled = false;
-
-      // Clear welcome message
-      this.messagesContainer.innerHTML = '';
-
-      // Update users
-      this.updateUsers(result.users || []);
-
-      // Add system message
-      this.addSystemMessage('You joined the channel');
-    } catch (error) {
-      console.error('Failed to join channel:', error);
-      this.addSystemMessage('Failed to join channel');
-    }
-
-    this.toggleChannelBtn.disabled = false;
-  }
-
-  async leaveChannel() {
-    await this.sendToBackground({ type: 'LEAVE_CHANNEL' });
-
-    this.isInChannel = false;
-    this.toggleChannelBtn.textContent = 'Join';
-    this.toggleChannelBtn.classList.remove('active');
-    this.messageInput.disabled = true;
-    this.sendBtn.disabled = true;
-
-    this.usersList.innerHTML = '<span class="no-users">No one else here yet</span>';
-    this.userCount.textContent = '0';
-
-    this.addSystemMessage('You left the channel');
-  }
-
   async sendMessage() {
     const content = this.messageInput.value.trim();
-    if (!content || !this.isInChannel) return;
+    if (!content) return;
 
     this.messageInput.value = '';
 
@@ -264,10 +219,8 @@ class BarcPopup {
       case 'TAB_CHANGED':
         this.currentUrl = msg.url;
         this.updatePageInfo();
-        if (this.isInChannel) {
-          this.addSystemMessage('Page changed - rejoin to chat here');
-          this.leaveChannel();
-        }
+        // Clear messages when switching pages
+        this.messagesContainer.innerHTML = '';
         break;
     }
   }
@@ -301,7 +254,7 @@ class BarcPopup {
 
   updateUsers(users) {
     if (!users || users.length === 0) {
-      this.usersList.innerHTML = '<span class="no-users">No one else here yet</span>';
+      this.usersList.innerHTML = '<span class="no-users">Just you</span>';
       this.userCount.textContent = '0';
       return;
     }
@@ -322,13 +275,7 @@ class BarcPopup {
       this.connectionStatus.classList.add('disconnected');
     }
 
-    if (status.channelId) {
-      this.isInChannel = true;
-      this.toggleChannelBtn.textContent = 'Leave';
-      this.messageInput.disabled = false;
-      this.sendBtn.disabled = false;
-      this.updateUsers(status.users);
-    }
+    this.updateUsers(status.users);
   }
 
   async showSettings() {
