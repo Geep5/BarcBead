@@ -9,9 +9,6 @@
     "tabs",
     "alarms"
   ],
-  "host_permissions": [
-    "<all_urls>"
-  ],
   "action": {
     "default_popup": "src/ui/popup.html",
     "default_icon": {
@@ -24,13 +21,6 @@
     "service_worker": "src/background.js",
     "type": "module"
   },
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["src/content.js"],
-      "css": ["src/ui/content.css"]
-    }
-  ],
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
