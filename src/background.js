@@ -317,6 +317,12 @@ async function handleMessage(request, sender) {
       };
     }
 
+    case 'GET_CHANNEL_MESSAGES': {
+      return {
+        messages: nostrClient?.getChannelMessages() || []
+      };
+    }
+
     case 'GET_CURRENT_URL': {
       try {
         const tabs = await chrome.tabs.query({ active: true, currentWindow: true });

@@ -420,6 +420,8 @@ class BarcNostrClient {
     this.users = new Map(); // pubkey -> { name, lastSeen }
     this.dmConversations = new Map(); // pubkey -> [messages]
     this.globalActivity = new Map(); // url -> { users: Map, lastUpdate }
+    this.channelMessages = new Map(); // channelId -> [messages]
+    this.seenMessageIds = new Set(); // Dedup messages across relays
   }
 
   async init(savedPrivateKey = null) {
@@ -729,17 +731,36 @@ class BarcNostrClient {
 
   handleEvent(event) {
     if (event.kind === 42) {
+      // Skip if we've already seen this message (dedup across relays)
+      if (this.seenMessageIds.has(event.id)) return;
+      this.seenMessageIds.add(event.id);
+
       // Chat message
       const userName = this.getUserName(event.pubkey);
+      const message = {
+        id: event.id,
+        pubkey: event.pubkey,
+        name: userName,
+        content: event.content,
+        timestamp: event.created_at * 1000,
+        isOwn: event.pubkey === this.publicKey
+      };
+
+      // Cache the message
+      if (!this.channelMessages.has(this.currentChannelId)) {
+        this.channelMessages.set(this.currentChannelId, []);
+      }
+      const messages = this.channelMessages.get(this.currentChannelId);
+      messages.push(message);
+      // Keep sorted by timestamp
+      messages.sort((a, b) => a.timestamp - b.timestamp);
+      // Limit to last 100 messages per channel
+      if (messages.length > 100) {
+        messages.shift();
+      }
+
       if (this.messageCallback) {
-        this.messageCallback({
-          id: event.id,
-          pubkey: event.pubkey,
-          name: userName,
-          content: event.content,
-          timestamp: event.created_at * 1000,
-          isOwn: event.pubkey === this.publicKey
-        });
+        this.messageCallback(message);
       }
     } else if (event.kind === 10042) {
       // Presence update
@@ -774,6 +795,12 @@ class BarcNostrClient {
       }
     }
     return active;
+  }
+
+  getChannelMessages(channelId = null) {
+    const id = channelId || this.currentChannelId;
+    if (!id) return [];
+    return this.channelMessages.get(id) || [];
   }
 
   async announcePresence(name = null) {

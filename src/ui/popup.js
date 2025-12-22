@@ -131,6 +131,8 @@ class BarcPopup {
         this.updateUI(status);
         this.updatePageInfo();
         this.updateActivity(status.globalActivity || []);
+        // Load message history for current channel
+        await this.loadMessageHistory();
       }
 
       // Update connection status
@@ -280,6 +282,22 @@ class BarcPopup {
     }
   }
 
+  async loadMessageHistory() {
+    const result = await this.sendToBackground({ type: 'GET_CHANNEL_MESSAGES' });
+    const messages = result.messages || [];
+
+    // Clear and repopulate
+    this.messagesContainer.innerHTML = '';
+
+    if (messages.length === 0) {
+      return;
+    }
+
+    for (const msg of messages) {
+      this.addMessage(msg);
+    }
+  }
+
   handleBackgroundMessage(msg) {
     switch (msg.type) {
       case 'NEW_MESSAGE':
@@ -294,8 +312,9 @@ class BarcPopup {
       case 'TAB_CHANGED':
         this.currentUrl = msg.url;
         this.updatePageInfo();
-        // Clear messages when switching pages
+        // Clear messages and load history for new channel
         this.messagesContainer.innerHTML = '';
+        this.loadMessageHistory();
         break;
       case 'NEW_DM':
         // If we're viewing this conversation, add the message
@@ -307,8 +326,16 @@ class BarcPopup {
   }
 
   addMessage(msg) {
+    // Skip if message already displayed (dedup)
+    if (msg.id && this.messagesContainer.querySelector(`[data-msg-id="${msg.id}"]`)) {
+      return;
+    }
+
     const div = document.createElement('div');
     div.className = `message ${msg.isOwn ? 'own' : ''}`;
+    if (msg.id) {
+      div.dataset.msgId = msg.id;
+    }
 
     const time = new Date(msg.timestamp).toLocaleTimeString([], {
       hour: '2-digit',
