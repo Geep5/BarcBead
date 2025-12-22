@@ -79,15 +79,23 @@ class BarcPopup {
   }
 
   async init() {
-    // Tell background popup is open (clears unread badge)
-    await this.sendToBackground({ type: 'POPUP_OPENED' });
+    // Tell background popup is open (joins channel and clears unread badge)
+    const openResult = await this.sendToBackground({ type: 'POPUP_OPENED' });
 
     // Initialize and get status
     const initResult = await this.sendToBackground({ type: 'INIT' });
     const status = await this.sendToBackground({ type: 'GET_STATUS' });
-    const urlResult = await this.sendToBackground({ type: 'GET_CURRENT_URL' });
 
-    this.currentUrl = urlResult.url || status.url;
+    // Use URL from popup opened result, or status, or query directly
+    this.currentUrl = openResult.url || status.url;
+
+    // If still no URL, try querying directly
+    if (!this.currentUrl || this.currentUrl.startsWith('chrome')) {
+      const urlResult = await this.sendToBackground({ type: 'GET_CURRENT_URL' });
+      if (urlResult.url && !urlResult.url.startsWith('chrome')) {
+        this.currentUrl = urlResult.url;
+      }
+    }
 
     // Check if user has a key set up
     const { privateKey } = await chrome.storage.local.get(['privateKey']);

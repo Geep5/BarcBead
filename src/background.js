@@ -299,20 +299,18 @@ async function handleMessage(request, sender) {
     case 'POPUP_OPENED': {
       popupOpen = true;
       clearUnread();
-      // Ensure we're joined to the current tab's channel
-      if (currentTabUrl) {
-        await autoJoinChannel(currentTabUrl);
-      } else {
-        // Try to get current tab URL if we don't have it
-        try {
-          const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-          if (tabs[0]?.url) {
-            currentTabId = tabs[0].id;
-            await autoJoinChannel(tabs[0].url);
-          }
-        } catch {}
+      // Always get current tab URL fresh - don't rely on cached value
+      try {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tabs[0]?.url && !tabs[0].url.startsWith('chrome://') && !tabs[0].url.startsWith('chrome-extension://')) {
+          currentTabId = tabs[0].id;
+          currentTabUrl = tabs[0].url;
+          await autoJoinChannel(tabs[0].url);
+        }
+      } catch (e) {
+        console.error('Failed to get current tab:', e);
       }
-      return { success: true };
+      return { success: true, url: currentTabUrl };
     }
 
     case 'POPUP_CLOSED': {
