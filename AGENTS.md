@@ -12,7 +12,7 @@ A Chrome extension that lets users chat with others viewing the same webpage usi
 - **Event Kinds**:
   - Kind 42: Channel messages (with `d` tag for channel ID)
   - Kind 10042: Presence announcements
-- **Default Relays**: relay.damus.io, nos.lol, relay.nostr.band
+- **Default Relays**: relay.damus.io, nos.lol, relay.primal.net
 
 ### Key Files
 - `src/lib/nostr.js` - Core Nostr client with secp256k1 crypto
