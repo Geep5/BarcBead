@@ -131,8 +131,12 @@ class BarcPopup {
         this.updateUI(status);
         this.updatePageInfo();
         this.updateActivity(status.globalActivity || []);
-        // Load message history for current channel
-        await this.loadMessageHistory();
+        // Display messages fetched from relays
+        if (openResult.messages && openResult.messages.length > 0) {
+          for (const msg of openResult.messages) {
+            this.addMessage(msg);
+          }
+        }
       }
 
       // Update connection status
@@ -282,22 +286,6 @@ class BarcPopup {
     }
   }
 
-  async loadMessageHistory() {
-    const result = await this.sendToBackground({ type: 'GET_CHANNEL_MESSAGES' });
-    const messages = result.messages || [];
-
-    // Clear and repopulate
-    this.messagesContainer.innerHTML = '';
-
-    if (messages.length === 0) {
-      return;
-    }
-
-    for (const msg of messages) {
-      this.addMessage(msg);
-    }
-  }
-
   handleBackgroundMessage(msg) {
     switch (msg.type) {
       case 'NEW_MESSAGE':
@@ -312,9 +300,13 @@ class BarcPopup {
       case 'TAB_CHANGED':
         this.currentUrl = msg.url;
         this.updatePageInfo();
-        // Clear messages and load history for new channel
+        // Clear messages and display new channel's history from relay
         this.messagesContainer.innerHTML = '';
-        this.loadMessageHistory();
+        if (msg.messages && msg.messages.length > 0) {
+          for (const message of msg.messages) {
+            this.addMessage(message);
+          }
+        }
         break;
       case 'NEW_DM':
         // If we're viewing this conversation, add the message

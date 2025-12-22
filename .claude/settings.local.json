@@ -26,7 +26,32 @@
       "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" update Barc-584 --status in_progress)",
       "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" close Barc-584)",
       "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" create \"Auto-join channels and show badge notifications\" -p 0 --description \"Auto-join channel when browsing (passive listening). Show badge on extension icon with unread message count. Remove confusing Join button - just be in the channel automatically.\")",
-      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" update Barc-kfc --status in_progress)"
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" update Barc-kfc --status in_progress)",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" close Barc-kfc)",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" create \"Global activity view - see users across all URLs\" -p 1 --description \"Subscribe to all presence events globally (not just current channel). Show a view of which URLs have active users. Enables discovery of where people are chatting.\")",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" update Barc-4sa --status in_progress)",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" close Barc-4sa)",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" sync)",
+      "Bash(git push)",
+      "Bash(git remote add:*)",
+      "Bash(git push:*)",
+      "Bash(gh:*)",
+      "Bash(winget install:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(C:Usersgrantbingh.exe --version)",
+      "Bash(\"C:\\Users\\grant\\bin\\gh.exe\" --version)",
+      "Bash(\"C:\\Users\\grant\\bin\\gh.exe\" auth status)",
+      "Bash(git remote:*)",
+      "Bash(\"C:\\Users\\grant\\bin\\gh.exe\" repo create Geep5/BarcBead --public --source=. --push)",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" create \"Fix BIP340 Schnorr signature implementation\" -p 0 --description \"Fixed Nostr event signature verification failures. Implemented proper BIP340 tagged hashes (BIP0340/aux, BIP0340/nonce, BIP0340/challenge), handle private key negation when public key y-coordinate is odd.\")",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" close Barc-js8)",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" create \"Fix null publicKey crash on popup load\" -p 0 --description \"Fixed TypeError in announcePresence when publicKey was null. Added null check and fixed initClient to not return uninitialized client.\")",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" close Barc-hrg)",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" create \"Replace expired relay.nostr.band certificate\" -p 0 --description \"Replaced relay.nostr.band (SSL cert expired causing ERR_CERT_DATE_INVALID) with relay.primal.net\")",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" close Barc-els)",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" create \"Add encrypted DMs using NIP-04\" -p 1 --description \"Enable private direct messages between users using NIP-04 encrypted DMs. Click on a user in the presence list to start a DM conversation. Uses ECDH shared secret with AES-256-CBC encryption.\")",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" update Barc-16r --status in_progress)",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" close Barc-16r)"
     ]
   }
 }

@@ -296,6 +296,7 @@ class NostrRelay {
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 5;
     this.eventCallbacks = new Map();
+    this.eoseCallbacks = new Map(); // Called when historical events are done
   }
 
   connect() {
@@ -361,7 +362,13 @@ class NostrRelay {
           callback(event);
         }
       } else if (type === 'EOSE') {
-        // End of stored events - can ignore for real-time chat
+        // End of stored events - notify caller that historical fetch is complete
+        const [subId] = rest;
+        const eoseCallback = this.eoseCallbacks.get(subId);
+        if (eoseCallback) {
+          eoseCallback();
+          this.eoseCallbacks.delete(subId);
+        }
       } else if (type === 'OK') {
         // Event published successfully
         const [eventId, success, message] = rest;
@@ -372,10 +379,13 @@ class NostrRelay {
     }
   }
 
-  subscribe(subId, filters, callback) {
+  subscribe(subId, filters, callback, onEose = null) {
     if (!this.connected) return;
 
     this.eventCallbacks.set(subId, callback);
+    if (onEose) {
+      this.eoseCallbacks.set(subId, onEose);
+    }
     const msg = JSON.stringify(['REQ', subId, ...filters]);
     this.ws.send(msg);
     this.subscriptions.set(subId, filters);
@@ -420,8 +430,8 @@ class BarcNostrClient {
     this.users = new Map(); // pubkey -> { name, lastSeen }
     this.dmConversations = new Map(); // pubkey -> [messages]
     this.globalActivity = new Map(); // url -> { users: Map, lastUpdate }
-    this.channelMessages = new Map(); // channelId -> [messages]
     this.seenMessageIds = new Set(); // Dedup messages across relays
+    this.pendingMessages = []; // Messages collected during initial fetch
   }
 
   async init(savedPrivateKey = null) {
@@ -691,6 +701,8 @@ class BarcNostrClient {
   async joinChannel(url) {
     this.currentUrl = url;
     this.currentChannelId = await urlToChannelId(url);
+    this.pendingMessages = [];
+    this.seenMessageIds.clear();
 
     // Subscribe to channel messages
     // Using kind 42 (channel message) with 'd' tag for channel ID
@@ -707,16 +719,47 @@ class BarcNostrClient {
       }
     ];
 
-    for (const relay of this.relays) {
-      relay.subscribe(`barc-${this.currentChannelId}`, filters, (event) => {
-        this.handleEvent(event);
-      });
+    // Wait for at least one relay to finish sending historical events
+    const connectedRelays = this.relays.filter(r => r.connected);
+    if (connectedRelays.length === 0) {
+      return { channelId: this.currentChannelId, messages: [] };
     }
+
+    // Create a promise that resolves when first relay sends EOSE
+    const eosePromise = new Promise((resolve) => {
+      let resolved = false;
+      const timeout = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          resolve();
+        }
+      }, 3000); // 3 second timeout
+
+      for (const relay of connectedRelays) {
+        relay.subscribe(`barc-${this.currentChannelId}`, filters, (event) => {
+          this.handleEvent(event, true); // true = collecting history
+        }, () => {
+          // EOSE callback - historical events done
+          if (!resolved) {
+            resolved = true;
+            clearTimeout(timeout);
+            resolve();
+          }
+        });
+      }
+    });
+
+    await eosePromise;
+
+    // Sort collected messages by timestamp
+    this.pendingMessages.sort((a, b) => a.timestamp - b.timestamp);
+    const messages = [...this.pendingMessages];
+    this.pendingMessages = [];
 
     // Announce presence
     await this.announcePresence();
 
-    return this.currentChannelId;
+    return { channelId: this.currentChannelId, messages };
   }
 
   leaveChannel() {
@@ -729,7 +772,7 @@ class BarcNostrClient {
     }
   }
 
-  handleEvent(event) {
+  handleEvent(event, collecting = false) {
     if (event.kind === 42) {
       // Skip if we've already seen this message (dedup across relays)
       if (this.seenMessageIds.has(event.id)) return;
@@ -746,20 +789,11 @@ class BarcNostrClient {
         isOwn: event.pubkey === this.publicKey
       };
 
-      // Cache the message
-      if (!this.channelMessages.has(this.currentChannelId)) {
-        this.channelMessages.set(this.currentChannelId, []);
-      }
-      const messages = this.channelMessages.get(this.currentChannelId);
-      messages.push(message);
-      // Keep sorted by timestamp
-      messages.sort((a, b) => a.timestamp - b.timestamp);
-      // Limit to last 100 messages per channel
-      if (messages.length > 100) {
-        messages.shift();
-      }
-
-      if (this.messageCallback) {
+      if (collecting) {
+        // Collecting historical messages during joinChannel
+        this.pendingMessages.push(message);
+      } else if (this.messageCallback) {
+        // Real-time message after EOSE
         this.messageCallback(message);
       }
     } else if (event.kind === 10042) {
@@ -795,12 +829,6 @@ class BarcNostrClient {
       }
     }
     return active;
-  }
-
-  getChannelMessages(channelId = null) {
-    const id = channelId || this.currentChannelId;
-    if (!id) return [];
-    return this.channelMessages.get(id) || [];
   }
 
   async announcePresence(name = null) {

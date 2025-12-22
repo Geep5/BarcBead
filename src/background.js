@@ -174,13 +174,16 @@ async function autoJoinChannel(url) {
   }
 
   currentTabUrl = url;
-  await client.joinChannel(url);
+  const result = await client.joinChannel(url);
 
   if (userName) {
     await client.announcePresence(userName);
   }
 
   updateBadge();
+
+  // Return messages from relay
+  return result?.messages || [];
 }
 
 // Broadcast message to popup and active tab
@@ -317,12 +320,6 @@ async function handleMessage(request, sender) {
       };
     }
 
-    case 'GET_CHANNEL_MESSAGES': {
-      return {
-        messages: nostrClient?.getChannelMessages() || []
-      };
-    }
-
     case 'GET_CURRENT_URL': {
       try {
         const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -335,18 +332,19 @@ async function handleMessage(request, sender) {
     case 'POPUP_OPENED': {
       popupOpen = true;
       clearUnread();
+      let messages = [];
       // Always get current tab URL fresh - don't rely on cached value
       try {
         const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
         if (tabs[0]?.url && !tabs[0].url.startsWith('chrome://') && !tabs[0].url.startsWith('chrome-extension://')) {
           currentTabId = tabs[0].id;
           currentTabUrl = tabs[0].url;
-          await autoJoinChannel(tabs[0].url);
+          messages = await autoJoinChannel(tabs[0].url);
         }
       } catch (e) {
         console.error('Failed to get current tab:', e);
       }
-      return { success: true, url: currentTabUrl };
+      return { success: true, url: currentTabUrl, messages };
     }
 
     case 'POPUP_CLOSED': {
@@ -365,8 +363,8 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
     currentTabId = activeInfo.tabId;
     const tab = await chrome.tabs.get(activeInfo.tabId);
     if (tab.url) {
-      await autoJoinChannel(tab.url);
-      broadcastToAll({ type: 'TAB_CHANGED', url: tab.url });
+      const messages = await autoJoinChannel(tab.url);
+      broadcastToAll({ type: 'TAB_CHANGED', url: tab.url, messages });
     }
   } catch {}
 });
@@ -375,8 +373,8 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.url && tab.active) {
     currentTabId = tabId;
-    await autoJoinChannel(changeInfo.url);
-    broadcastToAll({ type: 'TAB_CHANGED', url: changeInfo.url });
+    const messages = await autoJoinChannel(changeInfo.url);
+    broadcastToAll({ type: 'TAB_CHANGED', url: changeInfo.url, messages });
   }
 });
 
