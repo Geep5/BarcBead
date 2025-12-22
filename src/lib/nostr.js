@@ -293,15 +293,21 @@ class BarcNostrClient {
     this.publicKey = getPublicKey(this.privateKey);
 
     // Connect to relays
-    for (const url of DEFAULT_RELAYS) {
+    const connectionPromises = DEFAULT_RELAYS.map(async (url) => {
       const relay = new NostrRelay(url);
       try {
         await relay.connect();
         this.relays.push(relay);
+        console.log(`Successfully connected to ${url}`);
+        return true;
       } catch (error) {
         console.warn(`Failed to connect to ${url}:`, error);
+        return false;
       }
-    }
+    });
+
+    await Promise.allSettled(connectionPromises);
+    console.log(`Connected to ${this.relays.filter(r => r.connected).length}/${DEFAULT_RELAYS.length} relays`);
 
     // Subscribe to global presence events to see activity across all URLs
     this.subscribeToGlobalActivity();
@@ -522,7 +528,17 @@ class BarcNostrClient {
   }
 
   async sendMessage(content) {
-    if (!this.currentChannelId || !content.trim()) return null;
+    if (!this.currentChannelId || !content.trim()) {
+      console.error('sendMessage: No channel joined or empty content');
+      return null;
+    }
+
+    // Check if any relay is connected
+    const connectedRelays = this.relays.filter(r => r.connected);
+    if (connectedRelays.length === 0) {
+      console.error('sendMessage: No relays connected');
+      return null;
+    }
 
     const event = await createEvent(
       this.privateKey,
@@ -531,8 +547,28 @@ class BarcNostrClient {
       [['d', this.currentChannelId]]
     );
 
-    for (const relay of this.relays) {
-      relay.publish(event);
+    let published = false;
+    for (const relay of connectedRelays) {
+      if (relay.publish(event)) {
+        published = true;
+      }
+    }
+
+    if (!published) {
+      console.error('sendMessage: Failed to publish to any relay');
+      return null;
+    }
+
+    // Also trigger our own message callback so the message appears immediately
+    if (this.messageCallback) {
+      this.messageCallback({
+        id: event.id,
+        pubkey: event.pubkey,
+        name: this.getUserName(event.pubkey),
+        content: event.content,
+        timestamp: event.created_at * 1000,
+        isOwn: true
+      });
     }
 
     return event;

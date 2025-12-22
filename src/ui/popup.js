@@ -224,7 +224,15 @@ class BarcPopup {
     });
 
     if (!result.success) {
-      this.addSystemMessage('Failed to send message');
+      // Check connection status for more specific error
+      const status = await this.sendToBackground({ type: 'GET_STATUS' });
+      if (!status.connected) {
+        this.addSystemMessage('Not connected to any relays');
+      } else if (!status.channelId) {
+        this.addSystemMessage('No channel joined - try refreshing');
+      } else {
+        this.addSystemMessage('Failed to send message');
+      }
     }
   }
 
