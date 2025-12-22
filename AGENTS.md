@@ -2,6 +2,24 @@
 
 This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
 
+## Project: Barc - Decentralized Page Chat
+
+A Chrome extension that lets users chat with others viewing the same webpage using the Nostr protocol. Future roadmap includes WebRTC voice/video calls.
+
+### Architecture Overview
+- **Nostr Protocol**: Pure JS implementation (no dependencies) for relay communication
+- **Channel System**: URLs are hashed to create unique channel IDs
+- **Event Kinds**:
+  - Kind 42: Channel messages (with `d` tag for channel ID)
+  - Kind 10042: Presence announcements
+- **Default Relays**: relay.damus.io, nos.lol, relay.nostr.band
+
+### Key Files
+- `src/lib/nostr.js` - Core Nostr client with secp256k1 crypto
+- `src/background.js` - Service worker managing connections
+- `src/content.js` - Floating chat widget on pages
+- `src/ui/popup.*` - Extension popup interface
+
 ## Quick Reference
 
 ```bash
@@ -10,6 +28,7 @@ bd show <id>          # View issue details
 bd update <id> --status in_progress  # Claim work
 bd close <id>         # Complete work
 bd sync               # Sync with git
+bd list               # List all issues
 ```
 
 ## Landing the Plane (Session Completion)

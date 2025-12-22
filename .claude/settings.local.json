@@ -10,7 +10,18 @@
       "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" init)",
       "Bash(git init:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" create \"WebRTC voice/video calling system\" -p 0 --description \"Implement peer-to-peer voice and video calling using WebRTC with Nostr for signaling. Exchange SDP offers/answers and ICE candidates through Nostr events.\")",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" create \"Nostr signaling for WebRTC\" -p 1 --description \"Create custom Nostr event kinds for WebRTC signaling: SDP offer/answer exchange, ICE candidate sharing. Use p-tags for targeted peer communication.\")",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" create \"WebRTC peer connection manager\" -p 1 --description \"Build RTCPeerConnection wrapper for managing audio/video streams, handling connection state, and media device access.\")",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" create \"Voice/video call UI components\" -p 1 --description \"Add call controls UI: mute/unmute, video on/off, end call. Display remote video stream and local preview.\")",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" dep add Barc-1uv Barc-0zr)",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" dep add Barc-5eh Barc-0zr)",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" dep add Barc-qdd Barc-0zr)",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" create \"Improve relay connection resilience\" -p 2 --description \"Add better reconnection logic, relay health monitoring, and fallback relay support. Consider adding relay discovery.\")",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" create \"NIP-07 browser extension wallet support\" -p 2 --description \"Add support for NIP-07 compatible browser extensions (nos2x, Alby) to use existing Nostr identities instead of generating new keys.\")",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" create \"Message encryption with NIP-04\" -p 2 --description \"Implement NIP-04 encrypted direct messages for private chats. Use shared secret from ECDH for AES encryption.\")",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" list)"
     ]
   }
 }
