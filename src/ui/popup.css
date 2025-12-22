@@ -129,6 +129,36 @@ body {
   margin-top: 24px;
 }
 
+/* Setup options */
+.setup-options {
+  text-align: left;
+}
+
+.btn.full-width {
+  width: 100%;
+  margin-bottom: 12px;
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  margin: 16px 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.divider::before,
+.divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.divider span {
+  padding: 0 12px;
+}
+
 /* Input groups */
 .input-group {
   margin-bottom: 16px;

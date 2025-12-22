@@ -21,7 +21,9 @@
       "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" create \"Improve relay connection resilience\" -p 2 --description \"Add better reconnection logic, relay health monitoring, and fallback relay support. Consider adding relay discovery.\")",
       "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" create \"NIP-07 browser extension wallet support\" -p 2 --description \"Add support for NIP-07 compatible browser extensions (nos2x, Alby) to use existing Nostr identities instead of generating new keys.\")",
       "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" create \"Message encryption with NIP-04\" -p 2 --description \"Implement NIP-04 encrypted direct messages for private chats. Use shared secret from ECDH for AES encryption.\")",
-      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" list)"
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" list)",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" create \"Fix onboarding flow: key-first instead of display name\" -p 0 --description \"Change setup screen to ask for Nostr public key OR generate new keypair. Display name should be secondary/optional. Support importing existing keys.\")",
+      "Bash(\"C:\\Users\\grant\\bin\\bd.exe\" update Barc-584 --status in_progress)"
     ]
   }
 }

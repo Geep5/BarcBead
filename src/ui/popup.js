@@ -11,9 +11,12 @@ class BarcPopup {
     this.chatScreen = document.getElementById('chat-screen');
     this.settingsScreen = document.getElementById('settings-screen');
 
-    this.usernameInput = document.getElementById('username-input');
-    this.startBtn = document.getElementById('start-btn');
+    // Setup elements
+    this.generateKeyBtn = document.getElementById('generate-key-btn');
+    this.importKeyInput = document.getElementById('import-key-input');
+    this.importKeyBtn = document.getElementById('import-key-btn');
 
+    // Chat elements
     this.pageUrl = document.getElementById('page-url');
     this.toggleChannelBtn = document.getElementById('toggle-channel');
     this.usersList = document.getElementById('users-list');
@@ -24,6 +27,7 @@ class BarcPopup {
     this.connectionStatus = document.getElementById('connection-status');
     this.userCount = document.getElementById('user-count');
 
+    // Settings elements
     this.settingsToggle = document.getElementById('settings-toggle');
     this.settingsName = document.getElementById('settings-name');
     this.pubkeyDisplay = document.getElementById('pubkey-display');
@@ -35,10 +39,11 @@ class BarcPopup {
   }
 
   bindEvents() {
-    // Setup
-    this.startBtn.addEventListener('click', () => this.handleStart());
-    this.usernameInput.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') this.handleStart();
+    // Setup - key management
+    this.generateKeyBtn.addEventListener('click', () => this.handleGenerateKey());
+    this.importKeyBtn.addEventListener('click', () => this.handleImportKey());
+    this.importKeyInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') this.handleImportKey();
     });
 
     // Chat
@@ -68,10 +73,10 @@ class BarcPopup {
 
     this.currentUrl = urlResult.url;
 
-    // Check if user has set up before
-    const { userName } = await chrome.storage.local.get(['userName']);
+    // Check if user has a key set up
+    const { privateKey } = await chrome.storage.local.get(['privateKey']);
 
-    if (!userName) {
+    if (!privateKey) {
       this.showScreen('setup');
     } else {
       this.showScreen('chat');
@@ -105,16 +110,60 @@ class BarcPopup {
     }
   }
 
-  async handleStart() {
-    const name = this.usernameInput.value.trim();
-    if (!name) {
-      this.usernameInput.focus();
+  async handleGenerateKey() {
+    this.generateKeyBtn.disabled = true;
+    this.generateKeyBtn.textContent = 'Generating...';
+
+    try {
+      const result = await this.sendToBackground({ type: 'GENERATE_KEY' });
+
+      if (result.success) {
+        this.pubkeyDisplay.value = result.publicKey;
+        this.showScreen('chat');
+        this.updatePageInfo();
+      } else {
+        alert('Failed to generate key: ' + (result.error || 'Unknown error'));
+      }
+    } catch (error) {
+      console.error('Failed to generate key:', error);
+      alert('Failed to generate key');
+    }
+
+    this.generateKeyBtn.disabled = false;
+    this.generateKeyBtn.textContent = 'Generate New Identity';
+  }
+
+  async handleImportKey() {
+    const keyInput = this.importKeyInput.value.trim();
+    if (!keyInput) {
+      this.importKeyInput.focus();
       return;
     }
 
-    await this.sendToBackground({ type: 'SET_USERNAME', name });
-    this.showScreen('chat');
-    this.updatePageInfo();
+    this.importKeyBtn.disabled = true;
+    this.importKeyBtn.textContent = 'Importing...';
+
+    try {
+      const result = await this.sendToBackground({
+        type: 'IMPORT_KEY',
+        key: keyInput
+      });
+
+      if (result.success) {
+        this.pubkeyDisplay.value = result.publicKey;
+        this.importKeyInput.value = '';
+        this.showScreen('chat');
+        this.updatePageInfo();
+      } else {
+        alert('Failed to import key: ' + (result.error || 'Invalid key format'));
+      }
+    } catch (error) {
+      console.error('Failed to import key:', error);
+      alert('Failed to import key');
+    }
+
+    this.importKeyBtn.disabled = false;
+    this.importKeyBtn.textContent = 'Import Key';
   }
 
   updatePageInfo() {
@@ -285,6 +334,10 @@ class BarcPopup {
   async showSettings() {
     const { userName } = await chrome.storage.local.get(['userName']);
     this.settingsName.value = userName || '';
+    const status = await this.sendToBackground({ type: 'GET_STATUS' });
+    if (status.publicKey) {
+      this.pubkeyDisplay.value = status.publicKey;
+    }
     this.showScreen('settings');
   }
 

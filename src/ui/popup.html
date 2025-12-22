@@ -25,11 +25,17 @@
       <div class="setup-content">
         <h2>Welcome to Barc</h2>
         <p>Chat with others viewing the same page</p>
-        <div class="input-group">
-          <label for="username-input">Your display name</label>
-          <input type="text" id="username-input" placeholder="Enter a name..." maxlength="20">
+
+        <div class="setup-options">
+          <button id="generate-key-btn" class="btn primary full-width">Generate New Identity</button>
+          <div class="divider"><span>or</span></div>
+          <div class="input-group">
+            <label for="import-key-input">Import existing key (nsec or hex)</label>
+            <input type="password" id="import-key-input" placeholder="nsec1... or hex private key">
+          </div>
+          <button id="import-key-btn" class="btn full-width">Import Key</button>
         </div>
-        <button id="start-btn" class="btn primary">Start Chatting</button>
+
         <p class="small">Powered by Nostr - fully decentralized</p>
       </div>
     </div>
