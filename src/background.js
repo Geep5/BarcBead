@@ -98,16 +98,14 @@ function clearUnread() {
 
 // Initialize the Nostr client with an existing key
 async function initClient(privateKey = null) {
-  // If we have a client and no new key, return existing
-  if (nostrClient && !privateKey) return nostrClient;
+  // If we have a fully initialized client and no new key, return existing
+  if (nostrClient && nostrClient.publicKey && !privateKey) return nostrClient;
 
   // If reinitializing with new key, disconnect first
   if (nostrClient && privateKey) {
     nostrClient.disconnect();
     nostrClient = null;
   }
-
-  nostrClient = new BarcNostrClient();
 
   // Load saved keys and username
   const stored = await chrome.storage.local.get(['privateKey', 'userName']);
@@ -116,15 +114,18 @@ async function initClient(privateKey = null) {
   // Use provided key, or stored key
   const keyToUse = privateKey || stored.privateKey;
 
-  if (keyToUse) {
-    await nostrClient.init(keyToUse);
-    // Save the key if it was newly provided
-    if (privateKey && privateKey !== stored.privateKey) {
-      await chrome.storage.local.set({ privateKey });
-    }
-  } else {
+  if (!keyToUse) {
     // No key yet - don't auto-generate, wait for user action
     return null;
+  }
+
+  // Create and initialize client
+  nostrClient = new BarcNostrClient();
+  await nostrClient.init(keyToUse);
+
+  // Save the key if it was newly provided
+  if (privateKey && privateKey !== stored.privateKey) {
+    await chrome.storage.local.set({ privateKey });
   }
 
   // Set up event handlers

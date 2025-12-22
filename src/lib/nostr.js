@@ -499,7 +499,7 @@ class BarcNostrClient {
   }
 
   async announcePresence(name = null) {
-    if (!this.currentChannelId) return;
+    if (!this.currentChannelId || !this.publicKey) return;
 
     const displayName = name || `User-${this.publicKey.slice(0, 6)}`;
 
