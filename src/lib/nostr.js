@@ -253,7 +253,7 @@ class NostrRelay {
         }
       } else if (type === 'OK') {
         const [eventId, success, message] = rest;
-        console.log(`Event ${eventId}: ${success ? 'published' : 'failed'} - ${message || ''}`);
+        console.log(`[${this.url}] Event ${eventId.slice(0, 8)}: ${success ? 'published' : 'REJECTED'} - ${message || ''}`);
       }
     } catch (error) {
       console.error('Error parsing message:', error);
@@ -563,6 +563,8 @@ class BarcNostrClient {
     this.pendingMessages = [];
     this.seenMessageIds.clear();
 
+    console.log('Joining channel:', this.currentChannelId, 'for URL:', url);
+
     const oneWeekAgo = Math.floor(Date.now() / 1000) - (7 * 24 * 60 * 60);
     const filters = [
       {
@@ -577,6 +579,7 @@ class BarcNostrClient {
         since: Math.floor(Date.now() / 1000) - 300
       }
     ];
+    console.log('Subscribing with filters:', JSON.stringify(filters));
 
     const connectedRelays = this.relays.filter(r => r.connected);
     if (connectedRelays.length === 0) {
@@ -610,6 +613,8 @@ class BarcNostrClient {
     this.pendingMessages.sort((a, b) => a.timestamp - b.timestamp);
     const messages = [...this.pendingMessages];
     this.pendingMessages = [];
+
+    console.log('joinChannel: Got', messages.length, 'messages after EOSE');
 
     await this.announcePresence();
 
@@ -697,6 +702,8 @@ class BarcNostrClient {
   }
 
   handleEvent(event, collecting = false) {
+    console.log('handleEvent received:', event.kind, event.id?.slice(0, 8), 'collecting:', collecting);
+
     if (event.kind === 42) {
       if (this.seenMessageIds.has(event.id)) return;
       this.seenMessageIds.add(event.id);
@@ -789,9 +796,14 @@ class BarcNostrClient {
     }
   }
 
-  async sendMessage(content) {
-    if (!this.currentChannelId || !content.trim()) {
-      console.error('sendMessage: No channel joined or empty content');
+  async sendMessage(content, url = null) {
+    // Use provided URL or fall back to current channel
+    const channelId = url ? await urlToChannelId(url) : this.currentChannelId;
+
+    console.log('sendMessage: url=', url, 'channelId=', channelId, 'currentChannelId=', this.currentChannelId);
+
+    if (!channelId || !content.trim()) {
+      console.error('sendMessage: No channel or empty content');
       return null;
     }
 
@@ -805,7 +817,7 @@ class BarcNostrClient {
       this.privateKey,
       42,
       content,
-      [['d', this.currentChannelId]]
+      [['d', channelId]]
     );
 
     let published = false;
