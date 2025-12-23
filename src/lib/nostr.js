@@ -103,16 +103,24 @@ async function signSchnorr(messageHash, privateKeyHex) {
   // Original private key as BigInt
   const privKey = BigInt('0x' + privateKeyHex);
 
-  // Compute public key point
+  // Compute public key point P = privKey * G
   const P = pointMultiply(privKey);
   const pHex = P[0].toString(16).padStart(64, '0');
 
-  // BIP340: If P.y is odd, negate the private key for signing
+  // BIP340: If P.y is odd, we need to negate d for signing
+  // The public key x-coordinate stays the same
   let d = privKey;
-  if (P[1] % 2n !== 0n) {
+  const yIsOdd = P[1] % 2n !== 0n;
+  if (yIsOdd) {
     d = CURVE.n - d;
   }
   const dHex = d.toString(16).padStart(64, '0');
+
+  console.log('signSchnorr debug:', {
+    messageHash: messageHash.slice(0, 16) + '...',
+    pHex: pHex.slice(0, 16) + '...',
+    yIsOdd
+  });
 
   // Generate deterministic k using BIP340 nonce generation
   // aux_rand is 32 zero bytes for simplicity
@@ -147,6 +155,12 @@ async function signSchnorr(messageHash, privateKeyHex) {
   // s = (k + e * d) mod n
   const s = mod(k + e * d, CURVE.n);
   const sHex = s.toString(16).padStart(64, '0');
+
+  console.log('signSchnorr result:', {
+    rHex: rHex.slice(0, 16) + '...',
+    sHex: sHex.slice(0, 16) + '...',
+    e: e.toString(16).slice(0, 16) + '...'
+  });
 
   return rHex + sHex;
 }
@@ -312,6 +326,12 @@ async function verifySignature(event) {
   try {
     const { id, pubkey, sig } = event;
 
+    console.log('verifySignature:', {
+      id: id.slice(0, 16) + '...',
+      pubkey: pubkey.slice(0, 16) + '...',
+      sig: sig.slice(0, 32) + '...'
+    });
+
     // Parse signature
     const rHex = sig.slice(0, 64);
     const sHex = sig.slice(64, 128);
@@ -319,12 +339,17 @@ async function verifySignature(event) {
     const s = BigInt('0x' + sHex);
 
     // Check bounds
-    if (r >= CURVE.p || s >= CURVE.n) return false;
+    if (r >= CURVE.p || s >= CURVE.n) {
+      console.error('Signature out of bounds');
+      return false;
+    }
 
     // Compute e = tagged_hash("BIP0340/challenge", R || P || m)
     const challengeInput = rHex + pubkey + id;
     const eHash = await taggedHash('BIP0340/challenge', challengeInput);
     const e = mod(BigInt('0x' + eHash), CURVE.n);
+
+    console.log('Verification e:', e.toString(16).slice(0, 16) + '...');
 
     // Recover public key point (x-only, need to compute y)
     const px = BigInt('0x' + pubkey);
@@ -341,10 +366,22 @@ async function verifySignature(event) {
     const negEP = pointMultiply(CURVE.n - e, P);
     const R_check = pointAdd(sG, negEP);
 
-    if (R_check === null) return false;
+    if (R_check === null) {
+      console.error('R_check is null');
+      return false;
+    }
 
-    // Check R'.x == r and R'.y is even
-    return R_check[0] === r && R_check[1] % 2n === 0n;
+    const xMatch = R_check[0] === r;
+    const yEven = R_check[1] % 2n === 0n;
+
+    console.log('Verification result:', {
+      xMatch,
+      yEven,
+      R_check_x: R_check[0].toString(16).slice(0, 16) + '...',
+      r: r.toString(16).slice(0, 16) + '...'
+    });
+
+    return xMatch && yEven;
   } catch (error) {
     console.error('Signature verification error:', error);
     return false;
