@@ -98,68 +98,52 @@ async function sha256(message) {
   return bytesToHex(new Uint8Array(hashBuffer));
 }
 
-// Schnorr signature (BIP340)
+// Schnorr signature (BIP340) - Simple RFC 6979 style
 async function signSchnorr(messageHash, privateKeyHex) {
-  // Original private key as BigInt
-  const privKey = BigInt('0x' + privateKeyHex);
+  const d = BigInt('0x' + privateKeyHex);
 
-  // Compute public key point P = privKey * G
-  const P = pointMultiply(privKey);
+  // Compute public key P = d*G
+  const P = pointMultiply(d);
+
+  // BIP340 uses x-only public keys, with implicit even y
+  // If P.y is odd, we need to sign with negated private key
+  let dSign = d;
+  if (P[1] % 2n !== 0n) {
+    dSign = CURVE.n - d;
+  }
+
   const pHex = P[0].toString(16).padStart(64, '0');
 
-  // BIP340: If P.y is odd, we need to negate d for signing
-  // The public key x-coordinate stays the same
-  let d = privKey;
-  const yIsOdd = P[1] % 2n !== 0n;
-  if (yIsOdd) {
-    d = CURVE.n - d;
-  }
-  const dHex = d.toString(16).padStart(64, '0');
+  // Generate random k (simpler than deterministic for now)
+  const kBytes = new Uint8Array(32);
+  crypto.getRandomValues(kBytes);
+  let k = mod(BigInt('0x' + bytesToHex(kBytes)), CURVE.n);
+  if (k === 0n) k = 1n;
 
-  console.log('signSchnorr debug:', {
-    messageHash: messageHash.slice(0, 16) + '...',
-    pHex: pHex.slice(0, 16) + '...',
-    yIsOdd
-  });
+  // R = k*G
+  let R = pointMultiply(k);
 
-  // Generate deterministic k using BIP340 nonce generation
-  // aux_rand is 32 zero bytes for simplicity
-  const auxRand = '00'.repeat(32);
-
-  // t = d XOR tagged_hash("BIP0340/aux", aux_rand)
-  const auxHash = await taggedHash('BIP0340/aux', auxRand);
-  const t = xorHex(dHex, auxHash);
-
-  // k' = tagged_hash("BIP0340/nonce", t || P || m)
-  const nonceInput = t + pHex + messageHash;
-  const kHash = await taggedHash('BIP0340/nonce', nonceInput);
-  let k = mod(BigInt('0x' + kHash), CURVE.n);
-  if (k === 0n) {
-    throw new Error('Invalid nonce');
-  }
-
-  // R = k' * G
-  const R = pointMultiply(k);
-
-  // BIP340: If R.y is odd, negate k
+  // If R.y is odd, negate k
   if (R[1] % 2n !== 0n) {
     k = CURVE.n - k;
+    R = pointMultiply(k);
   }
+
   const rHex = R[0].toString(16).padStart(64, '0');
 
-  // e = tagged_hash("BIP0340/challenge", R || P || m) mod n
-  const challengeInput = rHex + pHex + messageHash;
-  const eHash = await taggedHash('BIP0340/challenge', challengeInput);
+  // e = H(R || P || m)
+  const eInput = rHex + pHex + messageHash;
+  const eHash = await taggedHash('BIP0340/challenge', eInput);
   const e = mod(BigInt('0x' + eHash), CURVE.n);
 
-  // s = (k + e * d) mod n
-  const s = mod(k + e * d, CURVE.n);
+  // s = k + e*d mod n
+  const s = mod(k + e * dSign, CURVE.n);
   const sHex = s.toString(16).padStart(64, '0');
 
-  console.log('signSchnorr result:', {
-    rHex: rHex.slice(0, 16) + '...',
-    sHex: sHex.slice(0, 16) + '...',
-    e: e.toString(16).slice(0, 16) + '...'
+  console.log('signSchnorr:', {
+    pHex: pHex.slice(0, 16),
+    rHex: rHex.slice(0, 16),
+    yOdd: P[1] % 2n !== 0n
   });
 
   return rHex + sHex;
