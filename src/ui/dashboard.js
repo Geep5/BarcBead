@@ -43,6 +43,13 @@ class BarcDashboard {
     this.emojiBtn = document.getElementById('emoji-btn');
     this.emojiPicker = document.getElementById('emoji-picker');
 
+    // Filter controls
+    this.filterSince = document.getElementById('filter-since');
+    this.filterUntil = document.getElementById('filter-until');
+    this.filterLimit = document.getElementById('filter-limit');
+    this.filterApplyBtn = document.getElementById('filter-apply');
+    this.filterResetBtn = document.getElementById('filter-reset');
+
     // Emoji shortcode map
     this.emojiShortcodes = {
       ':)': '😊', ':-)': '😊', '(:': '😊',
@@ -126,6 +133,10 @@ class BarcDashboard {
 
     // Pin button
     this.pinBtn?.addEventListener('click', () => this.togglePinCurrentChannel());
+
+    // Filter controls
+    this.filterApplyBtn?.addEventListener('click', () => this.applyFilter());
+    this.filterResetBtn?.addEventListener('click', () => this.resetFilter());
   }
 
   async init() {
@@ -373,6 +384,57 @@ class BarcDashboard {
     }
 
     this.messageInput.focus();
+  }
+
+  async applyFilter() {
+    if (!this.selectedUrl) return;
+
+    // Get filter values
+    const sinceDate = this.filterSince?.value;
+    const untilDate = this.filterUntil?.value;
+    const limit = parseInt(this.filterLimit?.value || '10');
+
+    // Convert dates to unix timestamps
+    const since = sinceDate ? Math.floor(new Date(sinceDate).getTime() / 1000) : null;
+    const until = untilDate ? Math.floor(new Date(untilDate + 'T23:59:59').getTime() / 1000) : null;
+
+    // Clear current messages
+    this.messagesContainer.innerHTML = '';
+    this.addSystemMessage(`Searching... (since: ${sinceDate || 'any'}, until: ${untilDate || 'now'}, limit: ${limit})`);
+
+    // Request filtered messages
+    const result = await this.sendToBackground({
+      type: 'FETCH_MESSAGES',
+      url: this.selectedUrl,
+      since,
+      until,
+      limit
+    });
+
+    // Clear the searching message
+    this.messagesContainer.innerHTML = '';
+
+    if (result.messages && result.messages.length > 0) {
+      this.addSystemMessage(`Found ${result.messages.length} message(s)`);
+      for (const msg of result.messages) {
+        this.addMessage(msg);
+      }
+    } else {
+      this.addSystemMessage('No messages found for this filter');
+    }
+  }
+
+  resetFilter() {
+    // Clear filter inputs
+    if (this.filterSince) this.filterSince.value = '';
+    if (this.filterUntil) this.filterUntil.value = '';
+    if (this.filterLimit) this.filterLimit.value = '10';
+
+    // Reload current channel with default settings
+    if (this.selectedUrl) {
+      this.messagesContainer.innerHTML = '';
+      this.selectTab(this.selectedTabId, this.selectedUrl, this.selectedTitle);
+    }
   }
 
   async sendMessage() {

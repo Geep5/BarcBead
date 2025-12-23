@@ -338,6 +338,24 @@ async function handleMessage(request, sender) {
       return { counts };
     }
 
+    case 'FETCH_MESSAGES': {
+      if (!nostrClient) {
+        return { messages: [], error: 'Not connected' };
+      }
+      try {
+        const messages = await nostrClient.fetchMessages(
+          request.url,
+          request.since,
+          request.until,
+          request.limit
+        );
+        return { messages };
+      } catch (error) {
+        console.error('Failed to fetch messages:', error);
+        return { messages: [], error: error.message };
+      }
+    }
+
     default:
       return { error: 'Unknown message type' };
   }

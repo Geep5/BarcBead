@@ -775,6 +775,82 @@ class BarcNostrClient {
     }
   }
 
+  // Fetch messages with custom filters (for search functionality)
+  async fetchMessages(url, since = null, until = null, limit = 10) {
+    const channelId = await urlToChannelId(url);
+    const collectedMessages = [];
+    const seenIds = new Set();
+
+    // Build filter - default to last month if no since specified
+    const defaultSince = Math.floor(Date.now() / 1000) - (30 * 24 * 60 * 60);
+    const filter = {
+      kinds: [42],
+      '#d': [channelId],
+      since: since || defaultSince,
+      limit: limit
+    };
+
+    if (until) {
+      filter.until = until;
+    }
+
+    const connectedRelays = this.relays.filter(r => r.connected);
+    if (connectedRelays.length === 0) {
+      return [];
+    }
+
+    console.log('Fetching messages with filter:', filter);
+
+    // Create subscription ID for this search
+    const subId = `search-${Date.now()}`;
+
+    // Wait for EOSE from all relays or timeout
+    const eosePromise = new Promise((resolve) => {
+      let eoseCount = 0;
+      const timeout = setTimeout(() => {
+        console.log('Search timeout reached');
+        resolve();
+      }, 5000); // 5 second timeout for search
+
+      for (const relay of connectedRelays) {
+        relay.subscribe(subId, [filter], (event) => {
+          if (!seenIds.has(event.id)) {
+            seenIds.add(event.id);
+            const userName = this.getUserName(event.pubkey);
+            collectedMessages.push({
+              id: event.id,
+              pubkey: event.pubkey,
+              name: userName,
+              content: event.content,
+              timestamp: event.created_at * 1000,
+              isOwn: event.pubkey === this.publicKey
+            });
+          }
+        }, () => {
+          eoseCount++;
+          console.log(`EOSE from relay ${eoseCount}/${connectedRelays.length}`);
+          if (eoseCount >= connectedRelays.length) {
+            clearTimeout(timeout);
+            resolve();
+          }
+        });
+      }
+    });
+
+    await eosePromise;
+
+    // Unsubscribe from search
+    for (const relay of connectedRelays) {
+      relay.unsubscribe(subId);
+    }
+
+    // Sort by timestamp ascending
+    collectedMessages.sort((a, b) => a.timestamp - b.timestamp);
+
+    console.log(`Found ${collectedMessages.length} messages`);
+    return collectedMessages;
+  }
+
   handleEvent(event, collecting = false) {
     if (event.kind === 42) {
       // Skip if we've already seen this message (dedup across relays)
