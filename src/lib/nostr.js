@@ -100,35 +100,51 @@ async function sha256(message) {
 
 // Schnorr signature (BIP340)
 async function signSchnorr(messageHash, privateKeyHex) {
-  let d = BigInt('0x' + privateKeyHex);
+  // Original private key as BigInt
+  const privKey = BigInt('0x' + privateKeyHex);
 
-  // BIP340: If P.y is odd, negate d
-  const P = pointMultiply(d);
+  // Compute public key point
+  const P = pointMultiply(privKey);
+  const pHex = P[0].toString(16).padStart(64, '0');
+
+  // BIP340: If P.y is odd, negate the private key for signing
+  let d = privKey;
   if (P[1] % 2n !== 0n) {
     d = CURVE.n - d;
   }
-  const pHex = P[0].toString(16).padStart(64, '0');
+  const dHex = d.toString(16).padStart(64, '0');
 
-  // Generate deterministic k using tagged hash
-  // aux_rand is zeros for simplicity
-  const auxRand = '0'.repeat(64);
-  const t = xorHex(d.toString(16).padStart(64, '0'), await taggedHash('BIP0340/aux', auxRand));
-  const kData = t + pHex + messageHash;
-  const kHash = await taggedHash('BIP0340/nonce', kData);
+  // Generate deterministic k using BIP340 nonce generation
+  // aux_rand is 32 zero bytes for simplicity
+  const auxRand = '00'.repeat(32);
+
+  // t = d XOR tagged_hash("BIP0340/aux", aux_rand)
+  const auxHash = await taggedHash('BIP0340/aux', auxRand);
+  const t = xorHex(dHex, auxHash);
+
+  // k' = tagged_hash("BIP0340/nonce", t || P || m)
+  const nonceInput = t + pHex + messageHash;
+  const kHash = await taggedHash('BIP0340/nonce', nonceInput);
   let k = mod(BigInt('0x' + kHash), CURVE.n);
-  if (k === 0n) k = 1n;
+  if (k === 0n) {
+    throw new Error('Invalid nonce');
+  }
 
+  // R = k' * G
   const R = pointMultiply(k);
+
+  // BIP340: If R.y is odd, negate k
   if (R[1] % 2n !== 0n) {
     k = CURVE.n - k;
   }
-
   const rHex = R[0].toString(16).padStart(64, '0');
 
-  const eData = rHex + pHex + messageHash;
-  const eHash = await taggedHash('BIP0340/challenge', eData);
+  // e = tagged_hash("BIP0340/challenge", R || P || m) mod n
+  const challengeInput = rHex + pHex + messageHash;
+  const eHash = await taggedHash('BIP0340/challenge', challengeInput);
   const e = mod(BigInt('0x' + eHash), CURVE.n);
 
+  // s = (k + e * d) mod n
   const s = mod(k + e * d, CURVE.n);
   const sHex = s.toString(16).padStart(64, '0');
 
@@ -144,10 +160,13 @@ async function taggedHash(tag, msgHex) {
   return bytesToHex(new Uint8Array(hashBuffer));
 }
 
-// XOR two hex strings
+// XOR two hex strings (must be same length)
 function xorHex(a, b) {
+  if (a.length !== b.length) {
+    console.error('xorHex length mismatch:', a.length, b.length);
+  }
   let result = '';
-  for (let i = 0; i < 64; i += 2) {
+  for (let i = 0; i < a.length; i += 2) {
     const byteA = parseInt(a.substr(i, 2), 16);
     const byteB = parseInt(b.substr(i, 2), 16);
     result += (byteA ^ byteB).toString(16).padStart(2, '0');
@@ -257,13 +276,16 @@ async function createEvent(privateKey, kind, content, tags = []) {
   const pubkey = getPublicKey(privateKey);
   const created_at = Math.floor(Date.now() / 1000);
 
+  // NIP-01: Event ID is sha256 of serialized [0, pubkey, created_at, kind, tags, content]
   const eventData = [0, pubkey, created_at, kind, tags, content];
   const serialized = JSON.stringify(eventData);
   const id = await sha256(serialized);
 
+  console.log('Creating event:', { kind, pubkey: pubkey.slice(0, 16) + '...', id: id.slice(0, 16) + '...' });
+
   const sig = await signSchnorr(id, privateKey);
 
-  return {
+  const event = {
     id,
     pubkey,
     created_at,
@@ -272,6 +294,61 @@ async function createEvent(privateKey, kind, content, tags = []) {
     content,
     sig
   };
+
+  // Verify our own signature before sending
+  const isValid = await verifySignature(event);
+  if (!isValid) {
+    console.error('Self-verification failed! Event:', event);
+    console.error('Serialized:', serialized);
+  } else {
+    console.log('Signature self-verification passed');
+  }
+
+  return event;
+}
+
+// Verify a Schnorr signature (BIP340)
+async function verifySignature(event) {
+  try {
+    const { id, pubkey, sig } = event;
+
+    // Parse signature
+    const rHex = sig.slice(0, 64);
+    const sHex = sig.slice(64, 128);
+    const r = BigInt('0x' + rHex);
+    const s = BigInt('0x' + sHex);
+
+    // Check bounds
+    if (r >= CURVE.p || s >= CURVE.n) return false;
+
+    // Compute e = tagged_hash("BIP0340/challenge", R || P || m)
+    const challengeInput = rHex + pubkey + id;
+    const eHash = await taggedHash('BIP0340/challenge', challengeInput);
+    const e = mod(BigInt('0x' + eHash), CURVE.n);
+
+    // Recover public key point (x-only, need to compute y)
+    const px = BigInt('0x' + pubkey);
+    const y2 = mod(mod(px * px * px, CURVE.p) + 7n, CURVE.p);
+    let py = modPow(y2, (CURVE.p + 1n) / 4n, CURVE.p);
+    // BIP340: always use even y
+    if (py % 2n !== 0n) {
+      py = CURVE.p - py;
+    }
+    const P = [px, py];
+
+    // Compute R' = s*G - e*P
+    const sG = pointMultiply(s);
+    const negEP = pointMultiply(CURVE.n - e, P);
+    const R_check = pointAdd(sG, negEP);
+
+    if (R_check === null) return false;
+
+    // Check R'.x == r and R'.y is even
+    return R_check[0] === r && R_check[1] % 2n === 0n;
+  } catch (error) {
+    console.error('Signature verification error:', error);
+    return false;
+  }
 }
 
 // URL to channel ID - hash the normalized URL
