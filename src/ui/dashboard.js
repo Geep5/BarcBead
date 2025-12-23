@@ -35,6 +35,32 @@ class BarcDashboard {
     this.pubkeyDisplay = document.getElementById('pubkey-display');
     this.saveSettingsBtn = document.getElementById('save-settings');
 
+    // Emoji picker
+    this.emojiBtn = document.getElementById('emoji-btn');
+    this.emojiPicker = document.getElementById('emoji-picker');
+
+    // Emoji shortcode map
+    this.emojiShortcodes = {
+      ':)': '😊', ':-)': '😊', '(:': '😊',
+      ':D': '😀', ':-D': '😀',
+      ';)': '😉', ';-)': '😉',
+      ':P': '😛', ':-P': '😛', ':p': '😛',
+      ':(': '😢', ':-(': '😢',
+      ":'(": '😭', ":'-(": '😭',
+      ':O': '😮', ':-O': '😮', ':o': '😮',
+      '<3': '❤️', '</3': '💔',
+      ':*': '😘', ':-*': '😘',
+      'B)': '😎', 'B-)': '😎',
+      ':/': '😕', ':-/': '😕',
+      ':S': '😖', ':-S': '😖',
+      'XD': '😂', 'xD': '😂',
+      ':fire:': '🔥', ':heart:': '❤️', ':thumbsup:': '👍', ':thumbsdown:': '👎',
+      ':100:': '💯', ':eyes:': '👀', ':rocket:': '🚀', ':tada:': '🎉',
+      ':thinking:': '🤔', ':shrug:': '🤷', ':clap:': '👏', ':muscle:': '💪',
+      ':star:': '⭐', ':check:': '✅', ':x:': '❌', ':bulb:': '💡',
+      ':skull:': '💀', ':ghost:': '👻', ':clown:': '🤡', ':target:': '🎯'
+    };
+
     this.bindEvents();
     this.init();
   }
@@ -60,6 +86,27 @@ class BarcDashboard {
     this.settingsBtn.addEventListener('click', () => this.showSettings());
     this.closeSettingsBtn.addEventListener('click', () => this.hideSettings());
     this.saveSettingsBtn.addEventListener('click', () => this.saveSettings());
+
+    // Emoji picker
+    this.emojiBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.toggleEmojiPicker();
+    });
+
+    // Close emoji picker when clicking outside
+    document.addEventListener('click', (e) => {
+      if (!this.emojiPicker.contains(e.target) && e.target !== this.emojiBtn) {
+        this.emojiPicker.classList.add('hidden');
+      }
+    });
+
+    // Emoji selection
+    this.emojiPicker.querySelectorAll('.emoji').forEach(el => {
+      el.addEventListener('click', () => {
+        const emoji = el.dataset.emoji;
+        this.insertEmoji(emoji);
+      });
+    });
 
     // Listen for messages from background
     chrome.runtime.onMessage.addListener((msg) => this.handleBackgroundMessage(msg));
@@ -204,10 +251,14 @@ class BarcDashboard {
   }
 
   async sendMessage() {
-    const content = this.messageInput.value.trim();
+    let content = this.messageInput.value.trim();
     if (!content || !this.selectedUrl) return;
 
+    // Convert emoji shortcodes
+    content = this.convertShortcodes(content);
+
     this.messageInput.value = '';
+    this.emojiPicker.classList.add('hidden');
 
     const result = await this.sendToBackground({
       type: 'SEND_MESSAGE',
@@ -217,6 +268,30 @@ class BarcDashboard {
     if (!result.success) {
       this.addSystemMessage('Failed to send message');
     }
+  }
+
+  convertShortcodes(text) {
+    // Sort shortcodes by length (longest first) to avoid partial matches
+    const sortedCodes = Object.keys(this.emojiShortcodes).sort((a, b) => b.length - a.length);
+    for (const code of sortedCodes) {
+      text = text.split(code).join(this.emojiShortcodes[code]);
+    }
+    return text;
+  }
+
+  toggleEmojiPicker() {
+    this.emojiPicker.classList.toggle('hidden');
+  }
+
+  insertEmoji(emoji) {
+    const input = this.messageInput;
+    const start = input.selectionStart;
+    const end = input.selectionEnd;
+    const text = input.value;
+
+    input.value = text.substring(0, start) + emoji + text.substring(end);
+    input.focus();
+    input.selectionStart = input.selectionEnd = start + emoji.length;
   }
 
   handleBackgroundMessage(msg) {

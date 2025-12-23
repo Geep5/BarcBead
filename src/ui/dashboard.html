@@ -97,10 +97,55 @@
           </div>
 
           <div class="input-area">
-            <input type="text" id="message-input" placeholder="Type a message...">
+            <div class="input-wrapper">
+              <input type="text" id="message-input" placeholder="Type a message...">
+              <button id="emoji-btn" class="btn icon emoji-btn" title="Add emoji">&#128512;</button>
+            </div>
             <button id="send-btn" class="btn primary icon">
               <span>&#8594;</span>
             </button>
+          </div>
+
+          <!-- Emoji picker -->
+          <div id="emoji-picker" class="emoji-picker hidden">
+            <div class="emoji-grid">
+              <span class="emoji" data-emoji="😀">😀</span>
+              <span class="emoji" data-emoji="😂">😂</span>
+              <span class="emoji" data-emoji="😊">😊</span>
+              <span class="emoji" data-emoji="😍">😍</span>
+              <span class="emoji" data-emoji="🥰">🥰</span>
+              <span class="emoji" data-emoji="😎">😎</span>
+              <span class="emoji" data-emoji="🤔">🤔</span>
+              <span class="emoji" data-emoji="😢">😢</span>
+              <span class="emoji" data-emoji="😭">😭</span>
+              <span class="emoji" data-emoji="😤">😤</span>
+              <span class="emoji" data-emoji="🤯">🤯</span>
+              <span class="emoji" data-emoji="😱">😱</span>
+              <span class="emoji" data-emoji="🙄">🙄</span>
+              <span class="emoji" data-emoji="😏">😏</span>
+              <span class="emoji" data-emoji="🤗">🤗</span>
+              <span class="emoji" data-emoji="👍">👍</span>
+              <span class="emoji" data-emoji="👎">👎</span>
+              <span class="emoji" data-emoji="👏">👏</span>
+              <span class="emoji" data-emoji="🙌">🙌</span>
+              <span class="emoji" data-emoji="🤝">🤝</span>
+              <span class="emoji" data-emoji="💪">💪</span>
+              <span class="emoji" data-emoji="🎉">🎉</span>
+              <span class="emoji" data-emoji="🔥">🔥</span>
+              <span class="emoji" data-emoji="❤️">❤️</span>
+              <span class="emoji" data-emoji="💯">💯</span>
+              <span class="emoji" data-emoji="✅">✅</span>
+              <span class="emoji" data-emoji="❌">❌</span>
+              <span class="emoji" data-emoji="⭐">⭐</span>
+              <span class="emoji" data-emoji="💡">💡</span>
+              <span class="emoji" data-emoji="👀">👀</span>
+              <span class="emoji" data-emoji="🚀">🚀</span>
+              <span class="emoji" data-emoji="💀">💀</span>
+              <span class="emoji" data-emoji="🤡">🤡</span>
+              <span class="emoji" data-emoji="👻">👻</span>
+              <span class="emoji" data-emoji="🎯">🎯</span>
+              <span class="emoji" data-emoji="🤷">🤷</span>
+            </div>
           </div>
         </div>
       </main>
