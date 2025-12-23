@@ -9,6 +9,11 @@ class BarcDashboard {
     this.selectedTitle = null;
     this.tabUserCounts = new Map(); // url -> user count
 
+    // Profile state
+    this.openProfiles = []; // Array of {pubkey, name} for open profile tabs
+    this.currentProfile = null; // Currently viewing profile {pubkey, name}
+    this.myPublicKey = null; // User's own public key
+
     // DOM elements
     this.setupOverlay = document.getElementById('setup-overlay');
     this.mainLayout = document.getElementById('main-layout');
@@ -39,6 +44,15 @@ class BarcDashboard {
     this.pubkeyDisplay = document.getElementById('pubkey-display');
     this.saveSettingsBtn = document.getElementById('save-settings');
 
+    // Profile elements
+    this.myProfileBtn = document.getElementById('my-profile-btn');
+    this.profileTabsSection = document.getElementById('profile-tabs-section');
+    this.profileTabsList = document.getElementById('profile-tabs-list');
+    this.profileContainer = document.getElementById('profile-container');
+    this.profileName = document.getElementById('profile-name');
+    this.profilePubkey = document.getElementById('profile-pubkey');
+    this.closeProfileBtn = document.getElementById('close-profile-btn');
+
     // Emoji picker
     this.emojiBtn = document.getElementById('emoji-btn');
     this.emojiPicker = document.getElementById('emoji-picker');
@@ -49,6 +63,13 @@ class BarcDashboard {
     this.filterLimit = document.getElementById('filter-limit');
     this.filterApplyBtn = document.getElementById('filter-apply');
     this.filterResetBtn = document.getElementById('filter-reset');
+
+    // Profile search elements
+    this.profileSearchInput = document.getElementById('profile-search-input');
+    this.profileSearchBtn = document.getElementById('profile-search-btn');
+
+    // Bech32 alphabet for npub decoding
+    this.BECH32_ALPHABET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
 
     // Emoji shortcode map
     this.emojiShortcodes = {
@@ -137,6 +158,18 @@ class BarcDashboard {
     // Filter controls
     this.filterApplyBtn?.addEventListener('click', () => this.applyFilter());
     this.filterResetBtn?.addEventListener('click', () => this.resetFilter());
+
+    // Profile events
+    this.myProfileBtn?.addEventListener('click', () => this.openMyProfile());
+    this.closeProfileBtn?.addEventListener('click', () => this.closeCurrentProfile());
+
+    // Profile search
+    this.profileSearchBtn?.addEventListener('click', () => this.handleProfileSearch());
+    this.profileSearchInput?.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        this.handleProfileSearch();
+      }
+    });
   }
 
   async init() {
@@ -158,6 +191,7 @@ class BarcDashboard {
         this.updateConnectionStatus(status.connected);
         if (status.publicKey) {
           this.pubkeyDisplay.value = status.publicKey;
+          this.myPublicKey = status.publicKey;
         }
       }
 
@@ -342,14 +376,19 @@ class BarcDashboard {
   }
 
   async selectTab(tabId, url, title = 'Page') {
-    if (this.selectedUrl === url) return;
+    if (this.selectedUrl === url && !this.currentProfile) return;
 
     this.selectedTabId = tabId;
     this.selectedUrl = url;
     this.selectedTitle = title;
 
+    // Clear current profile view if any
+    this.currentProfile = null;
+    this.updateProfileTabsActiveState();
+
     // Update UI
     this.noSelection.classList.add('hidden');
+    this.profileContainer.classList.add('hidden');
     this.chatContainer.classList.remove('hidden');
 
     const tab = this.browserTabs.find(t => t.id === tabId);
@@ -484,7 +523,7 @@ class BarcDashboard {
   handleBackgroundMessage(msg) {
     switch (msg.type) {
       case 'NEW_MESSAGE':
-        // Only show if we're viewing this channel
+        // Only show if we're viewing this channel (not profiles - they use wall posts)
         if (msg.url === this.selectedUrl || !msg.url) {
           this.addMessage(msg.message);
         }
@@ -531,14 +570,47 @@ class BarcDashboard {
       minute: '2-digit'
     });
 
-    div.innerHTML = `
-      ${!msg.isOwn ? `<div class="author">${this.escapeHtml(msg.name)}</div>` : ''}
-      <div class="content">${this.escapeHtml(msg.content)}</div>
-      <div class="time">${time}</div>
-    `;
+    // Generate avatar color from pubkey (consistent color per user)
+    const avatarColor = msg.pubkey ? this.getAvatarColor(msg.pubkey) : '#667eea';
+    const initial = (msg.name || 'A').charAt(0).toUpperCase();
+
+    if (msg.isOwn) {
+      div.innerHTML = `
+        <div class="content">${this.escapeHtml(msg.content)}</div>
+        <div class="time">${time}</div>
+      `;
+    } else {
+      div.innerHTML = `
+        <div class="message-author clickable-author" data-pubkey="${this.escapeHtml(msg.pubkey || '')}" data-name="${this.escapeHtml(msg.name || 'Anonymous')}">
+          <div class="message-avatar" style="background: ${avatarColor}">${initial}</div>
+          <span class="author-name">${this.escapeHtml(msg.name || 'Anonymous')}</span>
+        </div>
+        <div class="content">${this.escapeHtml(msg.content)}</div>
+        <div class="time">${time}</div>
+      `;
+
+      // Add click handler to open profile
+      const authorEl = div.querySelector('.clickable-author');
+      if (authorEl && msg.pubkey) {
+        authorEl.addEventListener('click', () => {
+          this.openProfile(msg.pubkey, msg.name || 'Anonymous');
+        });
+      }
+    }
 
     this.messagesContainer.appendChild(div);
     this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+  }
+
+  getAvatarColor(pubkey) {
+    // Generate a consistent color from pubkey
+    if (!pubkey || pubkey.length < 6) return '#667eea';
+    const colors = [
+      '#e94560', '#667eea', '#48bb78', '#ed8936', '#9f7aea',
+      '#38b2ac', '#f56565', '#4299e1', '#ed64a6', '#68d391'
+    ];
+    const index = parseInt(pubkey.slice(0, 6), 16) % colors.length;
+    return colors[index];
   }
 
   addSystemMessage(text) {
@@ -557,8 +629,19 @@ class BarcDashboard {
     }
 
     this.usersList.innerHTML = users.map(user => `
-      <span class="user-tag ${user.isYou ? 'you' : ''}">${this.escapeHtml(user.name)}${user.isYou ? ' (you)' : ''}</span>
+      <span class="user-tag clickable ${user.isYou ? 'you' : ''}" data-pubkey="${this.escapeHtml(user.pubkey || '')}" data-name="${this.escapeHtml(user.name)}">${this.escapeHtml(user.name)}${user.isYou ? ' (you)' : ''}</span>
     `).join('');
+
+    // Add click handlers to user tags
+    this.usersList.querySelectorAll('.user-tag.clickable').forEach(el => {
+      el.addEventListener('click', () => {
+        const pubkey = el.dataset.pubkey;
+        const name = el.dataset.name;
+        if (pubkey) {
+          this.openProfile(pubkey, name);
+        }
+      });
+    });
 
     this.userCount.textContent = users.length.toString();
   }
@@ -706,6 +789,392 @@ class BarcDashboard {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+  }
+
+  // Profile methods
+  openMyProfile() {
+    if (this.myPublicKey) {
+      this.openProfile(this.myPublicKey, 'My Profile', true);
+    }
+  }
+
+  async openProfile(pubkey, name, isOwn = false) {
+    // Add to open profiles if not already there
+    if (!this.openProfiles.find(p => p.pubkey === pubkey)) {
+      this.openProfiles.push({ pubkey, name, isOwn });
+      this.renderProfileTabs();
+    }
+
+    // Set as current profile
+    this.currentProfile = { pubkey, name, isOwn, activeTab: 'mentions' };
+
+    // Hide other views, show profile
+    this.noSelection.classList.add('hidden');
+    this.chatContainer.classList.add('hidden');
+    this.profileContainer.classList.remove('hidden');
+
+    // Update profile header
+    this.profileName.textContent = isOwn ? 'My Profile' : name;
+    this.profilePubkey.textContent = this.truncatePubkey(pubkey);
+
+    // Set avatar color
+    const avatarColor = this.getAvatarColor(pubkey);
+    const avatarEl = document.getElementById('profile-avatar');
+    if (avatarEl) {
+      avatarEl.style.background = avatarColor;
+      avatarEl.textContent = (name || 'U').charAt(0).toUpperCase();
+    }
+
+    // Set up tab click handlers
+    this.setupProfileTabs();
+
+    // Load the default tab (mentions)
+    await this.loadProfileFeed('mentions');
+
+    // Mark active in sidebar
+    this.updateProfileTabsActiveState();
+
+    // Clear selection from other tabs
+    this.tabsList.querySelectorAll('.tab-item').forEach(el => el.classList.remove('active'));
+    this.pinnedList?.querySelectorAll('.tab-item').forEach(el => el.classList.remove('active'));
+  }
+
+  setupProfileTabs() {
+    const tabButtons = document.querySelectorAll('.profile-tab');
+    tabButtons.forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const tab = btn.dataset.tab;
+        if (tab && tab !== this.currentProfile?.activeTab) {
+          // Update active state
+          tabButtons.forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          this.currentProfile.activeTab = tab;
+          await this.loadProfileFeed(tab);
+        }
+      });
+    });
+  }
+
+  async loadProfileFeed(tabType) {
+    if (!this.currentProfile) return;
+
+    const feedEl = document.getElementById('profile-feed');
+    const loadingEl = document.getElementById('profile-loading');
+    const emptyEl = document.getElementById('profile-empty');
+
+    // Show loading state
+    feedEl.innerHTML = '';
+    loadingEl.classList.remove('hidden');
+    emptyEl.classList.add('hidden');
+
+    let result;
+    if (tabType === 'mentions') {
+      result = await this.sendToBackground({
+        type: 'FETCH_MENTIONS',
+        targetPubkey: this.currentProfile.pubkey,
+        limit: 50
+      });
+    } else {
+      result = await this.sendToBackground({
+        type: 'FETCH_USER_POSTS',
+        targetPubkey: this.currentProfile.pubkey,
+        limit: 50
+      });
+    }
+
+    loadingEl.classList.add('hidden');
+
+    if (result.posts && result.posts.length > 0) {
+      for (const post of result.posts) {
+        this.addFeedItem(feedEl, post);
+      }
+    } else {
+      emptyEl.textContent = tabType === 'mentions'
+        ? 'No mentions found for this user'
+        : 'No posts found from this user';
+      emptyEl.classList.remove('hidden');
+    }
+  }
+
+  addFeedItem(container, post) {
+    const item = document.createElement('div');
+    item.className = 'feed-item';
+    item.dataset.eventId = post.id;
+
+    const avatarColor = this.getAvatarColor(post.pubkey);
+    const initial = (post.name || 'A').charAt(0).toUpperCase();
+    const timeStr = this.formatRelativeTime(post.timestamp);
+
+    // Build content HTML with images/links
+    let contentHtml = this.escapeHtml(post.content);
+
+    // Convert URLs to clickable links (except images)
+    contentHtml = contentHtml.replace(
+      /(https?:\/\/[^\s]+)/g,
+      (url) => {
+        if (/\.(jpg|jpeg|png|gif|webp)$/i.test(url)) {
+          return url; // Don't linkify image URLs, we'll show them
+        }
+        return `<a href="${url}" target="_blank" rel="noopener">${this.truncateUrl(url)}</a>`;
+      }
+    );
+
+    // Build images HTML
+    let imagesHtml = '';
+    if (post.images && post.images.length > 0) {
+      if (post.images.length === 1) {
+        imagesHtml = `<img class="feed-item-image" src="${this.escapeHtml(post.images[0])}" alt="Image" loading="lazy" onclick="window.open('${this.escapeHtml(post.images[0])}', '_blank')">`;
+      } else {
+        imagesHtml = `<div class="feed-item-images">${post.images.map(img =>
+          `<img src="${this.escapeHtml(img)}" alt="Image" loading="lazy" onclick="window.open('${this.escapeHtml(img)}', '_blank')">`
+        ).join('')}</div>`;
+      }
+    }
+
+    // Build reaction/repost special content
+    let specialContent = '';
+    if (post.kind === 7 && post.reaction) {
+      specialContent = `<div class="feed-item-reaction">${this.escapeHtml(post.reaction)}</div>`;
+    }
+    if (post.kind === 9735 && post.zapMessage) {
+      contentHtml = this.escapeHtml(post.zapMessage);
+    }
+
+    item.innerHTML = `
+      <div class="feed-item-header">
+        <div class="feed-item-avatar" style="background: ${avatarColor}" data-pubkey="${this.escapeHtml(post.pubkey)}">${initial}</div>
+        <div class="feed-item-meta">
+          <div class="feed-item-author" data-pubkey="${this.escapeHtml(post.pubkey)}">${this.escapeHtml(post.name || 'Anonymous')}</div>
+          <div class="feed-item-time">${timeStr}</div>
+        </div>
+        <div class="feed-item-kind">${this.escapeHtml(post.kindLabel || 'note')}</div>
+      </div>
+      <div class="feed-item-content">
+        ${specialContent}
+        <div class="feed-item-text">${contentHtml}</div>
+        ${imagesHtml}
+      </div>
+      <div class="feed-item-footer">
+        <div class="feed-item-id">${post.id.slice(0, 8)}...</div>
+      </div>
+    `;
+
+    // Add click handlers for author
+    item.querySelectorAll('[data-pubkey]').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const pubkey = el.dataset.pubkey;
+        if (pubkey && pubkey !== this.currentProfile?.pubkey) {
+          this.openProfile(pubkey, post.name || 'User');
+        }
+      });
+    });
+
+    container.appendChild(item);
+  }
+
+  formatRelativeTime(timestamp) {
+    const now = Date.now();
+    const diff = now - timestamp;
+    const seconds = Math.floor(diff / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+
+    if (days > 7) {
+      return new Date(timestamp).toLocaleDateString();
+    } else if (days > 0) {
+      return `${days}d ago`;
+    } else if (hours > 0) {
+      return `${hours}h ago`;
+    } else if (minutes > 0) {
+      return `${minutes}m ago`;
+    } else {
+      return 'just now';
+    }
+  }
+
+  truncateUrl(url) {
+    try {
+      const parsed = new URL(url);
+      const path = parsed.pathname.length > 20
+        ? parsed.pathname.slice(0, 20) + '...'
+        : parsed.pathname;
+      return parsed.hostname + path;
+    } catch {
+      return url.length > 40 ? url.slice(0, 40) + '...' : url;
+    }
+  }
+
+  closeCurrentProfile() {
+    if (!this.currentProfile) return;
+
+    // Remove from open profiles
+    this.openProfiles = this.openProfiles.filter(p => p.pubkey !== this.currentProfile.pubkey);
+    this.currentProfile = null;
+
+    this.renderProfileTabs();
+
+    // Show empty state
+    this.profileContainer.classList.add('hidden');
+    this.noSelection.classList.remove('hidden');
+  }
+
+  closeProfile(pubkey) {
+    // Remove from open profiles
+    this.openProfiles = this.openProfiles.filter(p => p.pubkey !== pubkey);
+
+    // If it was the current profile, close the view
+    if (this.currentProfile?.pubkey === pubkey) {
+      this.currentProfile = null;
+      this.profileContainer.classList.add('hidden');
+      this.noSelection.classList.remove('hidden');
+    }
+
+    this.renderProfileTabs();
+  }
+
+  renderProfileTabs() {
+    if (!this.profileTabsList || !this.profileTabsSection) return;
+
+    if (this.openProfiles.length === 0) {
+      this.profileTabsSection.classList.add('hidden');
+      return;
+    }
+
+    this.profileTabsSection.classList.remove('hidden');
+
+    this.profileTabsList.innerHTML = this.openProfiles.map(profile => {
+      const isActive = this.currentProfile?.pubkey === profile.pubkey;
+      const displayName = profile.isOwn ? 'My Profile' : profile.name;
+
+      return `
+        <div class="tab-item profile-tab ${isActive ? 'active' : ''}" data-pubkey="${this.escapeHtml(profile.pubkey)}">
+          <div class="tab-favicon">&#128100;</div>
+          <div class="tab-info">
+            <div class="tab-title">${this.escapeHtml(displayName)}</div>
+            <div class="tab-url">${this.truncatePubkey(profile.pubkey)}</div>
+          </div>
+          <div class="tab-actions">
+            <button class="unpin-btn close-profile-tab" data-pubkey="${this.escapeHtml(profile.pubkey)}" title="Close">&times;</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    // Add click handlers
+    this.profileTabsList.querySelectorAll('.tab-item').forEach(el => {
+      el.addEventListener('click', (e) => {
+        if (e.target.classList.contains('close-profile-tab')) return;
+        const pubkey = el.dataset.pubkey;
+        const profile = this.openProfiles.find(p => p.pubkey === pubkey);
+        if (profile) {
+          this.openProfile(profile.pubkey, profile.name, profile.isOwn);
+        }
+      });
+    });
+
+    // Add close handlers
+    this.profileTabsList.querySelectorAll('.close-profile-tab').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const pubkey = btn.dataset.pubkey;
+        this.closeProfile(pubkey);
+      });
+    });
+  }
+
+  updateProfileTabsActiveState() {
+    this.profileTabsList?.querySelectorAll('.tab-item').forEach(el => {
+      el.classList.toggle('active', el.dataset.pubkey === this.currentProfile?.pubkey);
+    });
+  }
+
+
+  truncatePubkey(pubkey) {
+    if (!pubkey || pubkey.length < 16) return pubkey;
+    return `${pubkey.slice(0, 8)}...${pubkey.slice(-8)}`;
+  }
+
+  // Bech32 decoding for npub keys
+  bech32Decode(str) {
+    str = str.toLowerCase();
+    const sepIndex = str.lastIndexOf('1');
+    if (sepIndex < 1) return null;
+
+    const hrp = str.slice(0, sepIndex);
+    const data = str.slice(sepIndex + 1);
+
+    const values = [];
+    for (const char of data) {
+      const idx = this.BECH32_ALPHABET.indexOf(char);
+      if (idx === -1) return null;
+      values.push(idx);
+    }
+
+    // Remove checksum (last 6 characters)
+    const payload = values.slice(0, -6);
+
+    // Convert 5-bit groups to 8-bit bytes
+    let acc = 0;
+    let bits = 0;
+    const result = [];
+
+    for (const value of payload) {
+      acc = (acc << 5) | value;
+      bits += 5;
+      while (bits >= 8) {
+        bits -= 8;
+        result.push((acc >> bits) & 0xff);
+      }
+    }
+
+    return { hrp, bytes: new Uint8Array(result) };
+  }
+
+  bytesToHex(bytes) {
+    return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  // Parse public key input - supports npub1... or hex format
+  parsePublicKey(input) {
+    input = input.trim();
+
+    // Check for npub bech32 format
+    if (input.startsWith('npub1')) {
+      const decoded = this.bech32Decode(input);
+      if (!decoded || decoded.hrp !== 'npub' || decoded.bytes.length !== 32) {
+        return { error: 'Invalid npub key format' };
+      }
+      return { pubkey: this.bytesToHex(decoded.bytes) };
+    }
+
+    // Check for hex format (64 chars)
+    if (/^[a-fA-F0-9]{64}$/.test(input)) {
+      return { pubkey: input.toLowerCase() };
+    }
+
+    return { error: 'Invalid key format. Use npub1... or 64-char hex.' };
+  }
+
+  handleProfileSearch() {
+    const input = this.profileSearchInput?.value.trim();
+    if (!input) {
+      this.profileSearchInput?.focus();
+      return;
+    }
+
+    const parsed = this.parsePublicKey(input);
+    if (parsed.error) {
+      alert(parsed.error);
+      return;
+    }
+
+    // Clear the input
+    this.profileSearchInput.value = '';
+
+    // Open the profile
+    this.openProfile(parsed.pubkey, 'User');
   }
 }
 

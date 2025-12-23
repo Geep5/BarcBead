@@ -1,5 +1,19 @@
-// Minimal Nostr implementation - no dependencies
+// Nostr implementation using @noble/secp256k1 for cryptography
 // Uses basic Nostr protocol: NIP-01 for events, custom tags for URL channels
+
+import * as secp from '@noble/secp256k1';
+import { sha256 } from '@noble/hashes/sha256';
+import { hmac } from '@noble/hashes/hmac';
+import { bytesToHex, hexToBytes, randomBytes } from '@noble/hashes/utils';
+
+// Configure secp256k1 to use sha256 from noble/hashes (required in v3)
+secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m));
+secp.etc.sha256Sync = (...m) => sha256(secp.etc.concatBytes(...m));
+// Also set on hashes object for Schnorr signatures
+if (secp.hashes) {
+  secp.hashes.sha256 = sha256;
+  secp.hashes.hmacSha256 = (key, msg) => hmac(sha256, key, msg);
+}
 
 const DEFAULT_RELAYS = [
   'wss://relay.damus.io',
@@ -9,208 +23,81 @@ const DEFAULT_RELAYS = [
 
 // Generate a random private key (32 bytes hex)
 function generatePrivateKey() {
-  const array = new Uint8Array(32);
-  crypto.getRandomValues(array);
-  return Array.from(array).map(b => b.toString(16).padStart(2, '0')).join('');
+  return bytesToHex(randomBytes(32));
 }
 
-// Derive public key from private key using secp256k1
-// We'll use the Web Crypto API with a workaround since it doesn't support secp256k1 directly
-// For now, we use a minimal implementation
-
-// secp256k1 curve parameters
-const CURVE = {
-  p: 0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2fn,
-  n: 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n,
-  Gx: 0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798n,
-  Gy: 0x483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8n
-};
-
-function mod(a, b = CURVE.p) {
-  const result = a % b;
-  return result >= 0n ? result : b + result;
-}
-
-function modInverse(a, m = CURVE.p) {
-  let [old_r, r] = [a, m];
-  let [old_s, s] = [1n, 0n];
-  while (r !== 0n) {
-    const q = old_r / r;
-    [old_r, r] = [r, old_r - q * r];
-    [old_s, s] = [s, old_s - q * s];
-  }
-  return mod(old_s, m);
-}
-
-function pointAdd(p1, p2) {
-  if (p1 === null) return p2;
-  if (p2 === null) return p1;
-  const [x1, y1] = p1;
-  const [x2, y2] = p2;
-  if (x1 === x2) {
-    if (y1 !== y2) return null;
-    const s = mod(3n * x1 * x1 * modInverse(2n * y1));
-    const x3 = mod(s * s - 2n * x1);
-    const y3 = mod(s * (x1 - x3) - y1);
-    return [x3, y3];
-  }
-  const s = mod((y2 - y1) * modInverse(x2 - x1));
-  const x3 = mod(s * s - x1 - x2);
-  const y3 = mod(s * (x1 - x3) - y1);
-  return [x3, y3];
-}
-
-function pointMultiply(k, point = [CURVE.Gx, CURVE.Gy]) {
-  let result = null;
-  let addend = point;
-  while (k > 0n) {
-    if (k & 1n) {
-      result = pointAdd(result, addend);
-    }
-    addend = pointAdd(addend, addend);
-    k >>= 1n;
-  }
-  return result;
-}
-
-function hexToBytes(hex) {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < hex.length; i += 2) {
-    bytes[i / 2] = parseInt(hex.substr(i, 2), 16);
-  }
-  return bytes;
-}
-
-function bytesToHex(bytes) {
-  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
+// Derive public key from private key (x-only, 32 bytes hex)
 function getPublicKey(privateKeyHex) {
-  const privateKey = BigInt('0x' + privateKeyHex);
-  const point = pointMultiply(privateKey);
-  const x = point[0].toString(16).padStart(64, '0');
-  return x;
+  const privateKeyBytes = hexToBytes(privateKeyHex);
+  const pubkeyBytes = secp.getPublicKey(privateKeyBytes, true); // compressed
+  // Return x-coordinate only (skip the 02/03 prefix byte)
+  return bytesToHex(pubkeyBytes.slice(1));
 }
 
-async function sha256(message) {
-  const msgBuffer = new TextEncoder().encode(message);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-  return bytesToHex(new Uint8Array(hashBuffer));
+// SHA256 hash of a string, returns hex
+async function sha256Hex(message) {
+  const msgBytes = new TextEncoder().encode(message);
+  return bytesToHex(sha256(msgBytes));
 }
 
-// Schnorr signature (BIP340) - Simple RFC 6979 style
-async function signSchnorr(messageHash, privateKeyHex) {
-  const d = BigInt('0x' + privateKeyHex);
-
-  // Compute public key P = d*G
-  const P = pointMultiply(d);
-
-  // BIP340 uses x-only public keys, with implicit even y
-  // If P.y is odd, we need to sign with negated private key
-  let dSign = d;
-  if (P[1] % 2n !== 0n) {
-    dSign = CURVE.n - d;
-  }
-
-  const pHex = P[0].toString(16).padStart(64, '0');
-
-  // Generate random k (simpler than deterministic for now)
-  const kBytes = new Uint8Array(32);
-  crypto.getRandomValues(kBytes);
-  let k = mod(BigInt('0x' + bytesToHex(kBytes)), CURVE.n);
-  if (k === 0n) k = 1n;
-
-  // R = k*G
-  let R = pointMultiply(k);
-
-  // If R.y is odd, negate k
-  if (R[1] % 2n !== 0n) {
-    k = CURVE.n - k;
-    R = pointMultiply(k);
-  }
-
-  const rHex = R[0].toString(16).padStart(64, '0');
-
-  // e = H(R || P || m)
-  const eInput = rHex + pHex + messageHash;
-  const eHash = await taggedHash('BIP0340/challenge', eInput);
-  const e = mod(BigInt('0x' + eHash), CURVE.n);
-
-  // s = k + e*d mod n
-  const s = mod(k + e * dSign, CURVE.n);
-  const sHex = s.toString(16).padStart(64, '0');
-
-  console.log('signSchnorr:', {
-    pHex: pHex.slice(0, 16),
-    rHex: rHex.slice(0, 16),
-    yOdd: P[1] % 2n !== 0n
-  });
-
-  return rHex + sHex;
+// SHA256 hash of bytes, returns bytes
+function sha256Bytes(bytes) {
+  return sha256(bytes);
 }
 
-// BIP340 tagged hash - hash(SHA256(tag) || SHA256(tag) || msg)
-async function taggedHash(tag, msgHex) {
-  const tagHash = await sha256(tag);
-  // Concatenate: tagHash (hex) + tagHash (hex) + msg (hex) -> all as bytes
-  const combined = hexToBytes(tagHash + tagHash + msgHex);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', combined);
-  return bytesToHex(new Uint8Array(hashBuffer));
+// Create and sign a Nostr event
+async function createEvent(privateKey, kind, content, tags = []) {
+  const pubkey = getPublicKey(privateKey);
+  const created_at = Math.floor(Date.now() / 1000);
+
+  // NIP-01: Event ID is sha256 of serialized [0, pubkey, created_at, kind, tags, content]
+  const eventData = [0, pubkey, created_at, kind, tags, content];
+  const serialized = JSON.stringify(eventData);
+  const id = await sha256Hex(serialized);
+
+  // Sign the event ID with Schnorr signature (both must be Uint8Array)
+  const sig = await secp.schnorr.sign(hexToBytes(id), hexToBytes(privateKey));
+
+  const event = {
+    id,
+    pubkey,
+    created_at,
+    kind,
+    tags,
+    content,
+    sig: bytesToHex(sig)
+  };
+
+  // Verify our own signature before sending (for debugging)
+  const isValid = await secp.schnorr.verify(sig, hexToBytes(id), hexToBytes(pubkey));
+  if (!isValid) {
+    console.error('Self-verification failed! Event:', event);
+  }
+
+  return event;
 }
 
-// XOR two hex strings (must be same length)
-function xorHex(a, b) {
-  if (a.length !== b.length) {
-    console.error('xorHex length mismatch:', a.length, b.length);
+// Verify a Schnorr signature on a Nostr event
+async function verifySignature(event) {
+  try {
+    const { id, pubkey, sig } = event;
+    return await secp.schnorr.verify(hexToBytes(sig), hexToBytes(id), hexToBytes(pubkey));
+  } catch (error) {
+    console.error('Signature verification error:', error);
+    return false;
   }
-  let result = '';
-  for (let i = 0; i < a.length; i += 2) {
-    const byteA = parseInt(a.substr(i, 2), 16);
-    const byteB = parseInt(b.substr(i, 2), 16);
-    result += (byteA ^ byteB).toString(16).padStart(2, '0');
-  }
-  return result;
 }
 
 // NIP-04: Encrypted Direct Messages
 // Uses ECDH to derive shared secret, then AES-256-CBC
 
-// Compute ECDH shared point (privateKey * recipientPubKey)
-function computeSharedPoint(privateKeyHex, recipientPubKeyHex) {
-  const privateKey = BigInt('0x' + privateKeyHex);
-  // Recipient pubkey is x-coordinate only, need to recover y
-  const x = BigInt('0x' + recipientPubKeyHex);
-  // y² = x³ + 7 (secp256k1)
-  const y2 = mod(mod(x * x * x, CURVE.p) + 7n, CURVE.p);
-  // Compute sqrt using Tonelli-Shanks (p ≡ 3 mod 4 for secp256k1)
-  let y = modPow(y2, (CURVE.p + 1n) / 4n, CURVE.p);
-  // Choose even y (standard convention for ECDH)
-  if (y % 2n !== 0n) {
-    y = CURVE.p - y;
-  }
-  const recipientPoint = [x, y];
-  const sharedPoint = pointMultiply(privateKey, recipientPoint);
-  return sharedPoint[0].toString(16).padStart(64, '0');
-}
-
-// Modular exponentiation
-function modPow(base, exp, mod) {
-  let result = 1n;
-  base = base % mod;
-  while (exp > 0n) {
-    if (exp % 2n === 1n) {
-      result = (result * base) % mod;
-    }
-    exp = exp / 2n;
-    base = (base * base) % mod;
-  }
-  return result;
-}
-
-// Encrypt message using NIP-04 (AES-256-CBC)
 async function nip04Encrypt(privateKeyHex, recipientPubKeyHex, plaintext) {
-  const sharedX = computeSharedPoint(privateKeyHex, recipientPubKeyHex);
-  const sharedSecret = hexToBytes(sharedX);
+  // Compute shared point using ECDH
+  // For NIP-04, we need to add the 02 prefix to make it a valid compressed pubkey
+  const recipientPubkeyFull = '02' + recipientPubKeyHex;
+  const sharedPoint = secp.getSharedSecret(privateKeyHex, recipientPubkeyFull);
+  // Use x-coordinate as shared secret (skip first byte which is the prefix)
+  const sharedSecret = sharedPoint.slice(1, 33);
 
   // Generate random IV (16 bytes)
   const iv = crypto.getRandomValues(new Uint8Array(16));
@@ -239,10 +126,11 @@ async function nip04Encrypt(privateKeyHex, recipientPubKeyHex, plaintext) {
   return `${ciphertextB64}?iv=${ivB64}`;
 }
 
-// Decrypt message using NIP-04 (AES-256-CBC)
 async function nip04Decrypt(privateKeyHex, senderPubKeyHex, encryptedContent) {
-  const sharedX = computeSharedPoint(privateKeyHex, senderPubKeyHex);
-  const sharedSecret = hexToBytes(sharedX);
+  // Compute shared point using ECDH
+  const senderPubkeyFull = '02' + senderPubKeyHex;
+  const sharedPoint = secp.getSharedSecret(privateKeyHex, senderPubkeyFull);
+  const sharedSecret = sharedPoint.slice(1, 33);
 
   // Parse format: base64(ciphertext)?iv=base64(iv)
   const [ciphertextB64, ivPart] = encryptedContent.split('?iv=');
@@ -270,117 +158,15 @@ async function nip04Decrypt(privateKeyHex, senderPubKeyHex, encryptedContent) {
   return new TextDecoder().decode(plaintextBytes);
 }
 
-async function createEvent(privateKey, kind, content, tags = []) {
-  const pubkey = getPublicKey(privateKey);
-  const created_at = Math.floor(Date.now() / 1000);
-
-  // NIP-01: Event ID is sha256 of serialized [0, pubkey, created_at, kind, tags, content]
-  const eventData = [0, pubkey, created_at, kind, tags, content];
-  const serialized = JSON.stringify(eventData);
-  const id = await sha256(serialized);
-
-  console.log('Creating event:', { kind, pubkey: pubkey.slice(0, 16) + '...', id: id.slice(0, 16) + '...' });
-
-  const sig = await signSchnorr(id, privateKey);
-
-  const event = {
-    id,
-    pubkey,
-    created_at,
-    kind,
-    tags,
-    content,
-    sig
-  };
-
-  // Verify our own signature before sending
-  const isValid = await verifySignature(event);
-  if (!isValid) {
-    console.error('Self-verification failed! Event:', event);
-    console.error('Serialized:', serialized);
-  } else {
-    console.log('Signature self-verification passed');
-  }
-
-  return event;
-}
-
-// Verify a Schnorr signature (BIP340)
-async function verifySignature(event) {
-  try {
-    const { id, pubkey, sig } = event;
-
-    console.log('verifySignature:', {
-      id: id.slice(0, 16) + '...',
-      pubkey: pubkey.slice(0, 16) + '...',
-      sig: sig.slice(0, 32) + '...'
-    });
-
-    // Parse signature
-    const rHex = sig.slice(0, 64);
-    const sHex = sig.slice(64, 128);
-    const r = BigInt('0x' + rHex);
-    const s = BigInt('0x' + sHex);
-
-    // Check bounds
-    if (r >= CURVE.p || s >= CURVE.n) {
-      console.error('Signature out of bounds');
-      return false;
-    }
-
-    // Compute e = tagged_hash("BIP0340/challenge", R || P || m)
-    const challengeInput = rHex + pubkey + id;
-    const eHash = await taggedHash('BIP0340/challenge', challengeInput);
-    const e = mod(BigInt('0x' + eHash), CURVE.n);
-
-    console.log('Verification e:', e.toString(16).slice(0, 16) + '...');
-
-    // Recover public key point (x-only, need to compute y)
-    const px = BigInt('0x' + pubkey);
-    const y2 = mod(mod(px * px * px, CURVE.p) + 7n, CURVE.p);
-    let py = modPow(y2, (CURVE.p + 1n) / 4n, CURVE.p);
-    // BIP340: always use even y
-    if (py % 2n !== 0n) {
-      py = CURVE.p - py;
-    }
-    const P = [px, py];
-
-    // Compute R' = s*G - e*P
-    const sG = pointMultiply(s);
-    const negEP = pointMultiply(CURVE.n - e, P);
-    const R_check = pointAdd(sG, negEP);
-
-    if (R_check === null) {
-      console.error('R_check is null');
-      return false;
-    }
-
-    const xMatch = R_check[0] === r;
-    const yEven = R_check[1] % 2n === 0n;
-
-    console.log('Verification result:', {
-      xMatch,
-      yEven,
-      R_check_x: R_check[0].toString(16).slice(0, 16) + '...',
-      r: r.toString(16).slice(0, 16) + '...'
-    });
-
-    return xMatch && yEven;
-  } catch (error) {
-    console.error('Signature verification error:', error);
-    return false;
-  }
-}
-
 // URL to channel ID - hash the normalized URL
 async function urlToChannelId(url) {
   try {
     const parsed = new URL(url);
     // Normalize: remove hash, some query params, trailing slashes
     const normalized = parsed.origin + parsed.pathname.replace(/\/$/, '');
-    return await sha256(normalized);
+    return await sha256Hex(normalized);
   } catch {
-    return await sha256(url);
+    return await sha256Hex(url);
   }
 }
 
@@ -394,12 +180,11 @@ class NostrRelay {
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 5;
     this.eventCallbacks = new Map();
-    this.eoseCallbacks = new Map(); // Called when historical events are done
+    this.eoseCallbacks = new Map();
   }
 
   connect() {
     return new Promise((resolve, reject) => {
-      // Timeout after 5 seconds
       const timeout = setTimeout(() => {
         if (!this.connected) {
           console.warn(`Connection timeout for relay: ${this.url}`);
@@ -460,7 +245,6 @@ class NostrRelay {
           callback(event);
         }
       } else if (type === 'EOSE') {
-        // End of stored events - notify caller that historical fetch is complete
         const [subId] = rest;
         const eoseCallback = this.eoseCallbacks.get(subId);
         if (eoseCallback) {
@@ -468,7 +252,6 @@ class NostrRelay {
           this.eoseCallbacks.delete(subId);
         }
       } else if (type === 'OK') {
-        // Event published successfully
         const [eventId, success, message] = rest;
         console.log(`Event ${eventId}: ${success ? 'published' : 'failed'} - ${message || ''}`);
       }
@@ -525,15 +308,14 @@ class BarcNostrClient {
     this.presenceCallback = null;
     this.globalActivityCallback = null;
     this.dmCallback = null;
-    this.users = new Map(); // pubkey -> { name, lastSeen }
-    this.dmConversations = new Map(); // pubkey -> [messages]
-    this.globalActivity = new Map(); // url -> { users: Map, lastUpdate }
-    this.seenMessageIds = new Set(); // Dedup messages across relays
-    this.pendingMessages = []; // Messages collected during initial fetch
+    this.users = new Map();
+    this.dmConversations = new Map();
+    this.globalActivity = new Map();
+    this.seenMessageIds = new Set();
+    this.pendingMessages = [];
   }
 
   async init(savedPrivateKey = null) {
-    // Load or generate keypair
     if (savedPrivateKey) {
       this.privateKey = savedPrivateKey;
     } else {
@@ -541,7 +323,6 @@ class BarcNostrClient {
     }
     this.publicKey = getPublicKey(this.privateKey);
 
-    // Connect to relays
     const connectionPromises = DEFAULT_RELAYS.map(async (url) => {
       const relay = new NostrRelay(url);
       try {
@@ -558,26 +339,22 @@ class BarcNostrClient {
     await Promise.allSettled(connectionPromises);
     console.log(`Connected to ${this.relays.filter(r => r.connected).length}/${DEFAULT_RELAYS.length} relays`);
 
-    // Subscribe to global presence events to see activity across all URLs
     this.subscribeToGlobalActivity();
-
-    // Subscribe to DMs addressed to us
     this.subscribeToDMs();
 
     return { privateKey: this.privateKey, publicKey: this.publicKey };
   }
 
   subscribeToDMs() {
-    // Subscribe to kind 4 (encrypted DM) events where we are the recipient
     const filters = [
       {
-        kinds: [4], // Encrypted DM
-        '#p': [this.publicKey], // Addressed to us
-        since: Math.floor(Date.now() / 1000) - 86400 // Last 24 hours
+        kinds: [4],
+        '#p': [this.publicKey],
+        since: Math.floor(Date.now() / 1000) - 86400
       },
       {
-        kinds: [4], // Encrypted DM
-        authors: [this.publicKey], // Sent by us (to show our own messages)
+        kinds: [4],
+        authors: [this.publicKey],
         since: Math.floor(Date.now() / 1000) - 86400
       }
     ];
@@ -592,12 +369,10 @@ class BarcNostrClient {
   async handleDMEvent(event) {
     if (event.kind !== 4) return;
 
-    // Determine the other party in the conversation
     const isFromMe = event.pubkey === this.publicKey;
     let otherPubkey;
 
     if (isFromMe) {
-      // Find recipient from p tag
       const pTag = event.tags.find(t => t[0] === 'p');
       if (!pTag) return;
       otherPubkey = pTag[1];
@@ -605,7 +380,6 @@ class BarcNostrClient {
       otherPubkey = event.pubkey;
     }
 
-    // Decrypt the message
     let plaintext;
     try {
       plaintext = await nip04Decrypt(this.privateKey, otherPubkey, event.content);
@@ -623,18 +397,15 @@ class BarcNostrClient {
       isOwn: isFromMe
     };
 
-    // Store in conversation
     if (!this.dmConversations.has(otherPubkey)) {
       this.dmConversations.set(otherPubkey, []);
     }
     const conversation = this.dmConversations.get(otherPubkey);
 
-    // Avoid duplicates
     if (!conversation.find(m => m.id === dm.id)) {
       conversation.push(dm);
       conversation.sort((a, b) => a.timestamp - b.timestamp);
 
-      // Notify callback
       if (this.dmCallback) {
         this.dmCallback(dm, otherPubkey);
       }
@@ -644,13 +415,11 @@ class BarcNostrClient {
   async sendDM(recipientPubkey, plaintext) {
     if (!plaintext.trim()) return null;
 
-    // Encrypt the message
     const encryptedContent = await nip04Encrypt(this.privateKey, recipientPubkey, plaintext);
 
-    // Create kind 4 event with p tag for recipient
     const event = await createEvent(
       this.privateKey,
-      4, // Encrypted DM kind
+      4,
       encryptedContent,
       [['p', recipientPubkey]]
     );
@@ -667,7 +436,6 @@ class BarcNostrClient {
       return null;
     }
 
-    // Add to our conversation immediately
     const dm = {
       id: event.id,
       pubkey: this.publicKey,
@@ -694,7 +462,6 @@ class BarcNostrClient {
   }
 
   getDMConversations() {
-    // Return list of conversations with last message
     const conversations = [];
     for (const [pubkey, messages] of this.dmConversations) {
       if (messages.length > 0) {
@@ -716,11 +483,10 @@ class BarcNostrClient {
   }
 
   subscribeToGlobalActivity() {
-    // Subscribe to ALL presence events (kind 10042) to see where people are
     const filters = [
       {
-        kinds: [10042], // Presence events
-        since: Math.floor(Date.now() / 1000) - 300 // Last 5 min
+        kinds: [10042],
+        since: Math.floor(Date.now() / 1000) - 300
       }
     ];
 
@@ -737,7 +503,6 @@ class BarcNostrClient {
       const url = data.url;
       if (!url) return;
 
-      // Get or create activity entry for this URL
       if (!this.globalActivity.has(url)) {
         this.globalActivity.set(url, { users: new Map(), lastUpdate: 0 });
       }
@@ -749,7 +514,6 @@ class BarcNostrClient {
       });
       activity.lastUpdate = Date.now();
 
-      // Notify callback
       if (this.globalActivityCallback) {
         this.globalActivityCallback(this.getGlobalActivity());
       }
@@ -761,7 +525,6 @@ class BarcNostrClient {
     const active = [];
 
     for (const [url, activity] of this.globalActivity) {
-      // Count active users (seen in last 5 min)
       let activeCount = 0;
       const activeUsers = [];
 
@@ -786,9 +549,7 @@ class BarcNostrClient {
       }
     }
 
-    // Sort by user count descending
     active.sort((a, b) => b.userCount - a.userCount);
-
     return active;
   }
 
@@ -802,31 +563,26 @@ class BarcNostrClient {
     this.pendingMessages = [];
     this.seenMessageIds.clear();
 
-    // Subscribe to channel messages
-    // Using kind 42 (channel message) with 'd' tag for channel ID
-    // Fetch up to 10 messages from the last week
     const oneWeekAgo = Math.floor(Date.now() / 1000) - (7 * 24 * 60 * 60);
     const filters = [
       {
-        kinds: [42], // Channel message
+        kinds: [42],
         '#d': [this.currentChannelId],
         since: oneWeekAgo,
-        limit: 10 // Get last 10 messages
+        limit: 10
       },
       {
-        kinds: [10042], // Presence (ephemeral-ish)
+        kinds: [10042],
         '#d': [this.currentChannelId],
-        since: Math.floor(Date.now() / 1000) - 300 // Last 5 min
+        since: Math.floor(Date.now() / 1000) - 300
       }
     ];
 
-    // Wait for at least one relay to finish sending historical events
     const connectedRelays = this.relays.filter(r => r.connected);
     if (connectedRelays.length === 0) {
       return { channelId: this.currentChannelId, messages: [] };
     }
 
-    // Create a promise that resolves when first relay sends EOSE
     const eosePromise = new Promise((resolve) => {
       let resolved = false;
       const timeout = setTimeout(() => {
@@ -834,13 +590,12 @@ class BarcNostrClient {
           resolved = true;
           resolve();
         }
-      }, 3000); // 3 second timeout
+      }, 3000);
 
       for (const relay of connectedRelays) {
         relay.subscribe(`barc-${this.currentChannelId}`, filters, (event) => {
-          this.handleEvent(event, true); // true = collecting history
+          this.handleEvent(event, true);
         }, () => {
-          // EOSE callback - historical events done
           if (!resolved) {
             resolved = true;
             clearTimeout(timeout);
@@ -852,12 +607,10 @@ class BarcNostrClient {
 
     await eosePromise;
 
-    // Sort collected messages by timestamp
     this.pendingMessages.sort((a, b) => a.timestamp - b.timestamp);
     const messages = [...this.pendingMessages];
     this.pendingMessages = [];
 
-    // Announce presence
     await this.announcePresence();
 
     return { channelId: this.currentChannelId, messages };
@@ -873,13 +626,11 @@ class BarcNostrClient {
     }
   }
 
-  // Fetch messages with custom filters (for search functionality)
   async fetchMessages(url, since = null, until = null, limit = 10) {
     const channelId = await urlToChannelId(url);
     const collectedMessages = [];
     const seenIds = new Set();
 
-    // Build filter - default to last month if no since specified
     const defaultSince = Math.floor(Date.now() / 1000) - (30 * 24 * 60 * 60);
     const filter = {
       kinds: [42],
@@ -899,16 +650,14 @@ class BarcNostrClient {
 
     console.log('Fetching messages with filter:', filter);
 
-    // Create subscription ID for this search
     const subId = `search-${Date.now()}`;
 
-    // Wait for EOSE from all relays or timeout
     const eosePromise = new Promise((resolve) => {
       let eoseCount = 0;
       const timeout = setTimeout(() => {
         console.log('Search timeout reached');
         resolve();
-      }, 5000); // 5 second timeout for search
+      }, 5000);
 
       for (const relay of connectedRelays) {
         relay.subscribe(subId, [filter], (event) => {
@@ -937,12 +686,10 @@ class BarcNostrClient {
 
     await eosePromise;
 
-    // Unsubscribe from search
     for (const relay of connectedRelays) {
       relay.unsubscribe(subId);
     }
 
-    // Sort by timestamp ascending
     collectedMessages.sort((a, b) => a.timestamp - b.timestamp);
 
     console.log(`Found ${collectedMessages.length} messages`);
@@ -951,11 +698,9 @@ class BarcNostrClient {
 
   handleEvent(event, collecting = false) {
     if (event.kind === 42) {
-      // Skip if we've already seen this message (dedup across relays)
       if (this.seenMessageIds.has(event.id)) return;
       this.seenMessageIds.add(event.id);
 
-      // Chat message
       const userName = this.getUserName(event.pubkey);
       const message = {
         id: event.id,
@@ -967,14 +712,11 @@ class BarcNostrClient {
       };
 
       if (collecting) {
-        // Collecting historical messages during joinChannel
         this.pendingMessages.push(message);
       } else if (this.messageCallback) {
-        // Real-time message after EOSE
         this.messageCallback(message);
       }
     } else if (event.kind === 10042) {
-      // Presence update
       try {
         const data = JSON.parse(event.content);
         this.users.set(event.pubkey, {
@@ -997,7 +739,7 @@ class BarcNostrClient {
     const now = Date.now();
     const active = [];
     for (const [pubkey, data] of this.users) {
-      if (now - data.lastSeen < 300000) { // Active in last 5 min
+      if (now - data.lastSeen < 300000) {
         active.push({
           pubkey,
           name: data.name,
@@ -1015,13 +757,13 @@ class BarcNostrClient {
 
     const content = JSON.stringify({
       name: displayName,
-      url: this.currentUrl, // Include URL so others can see where we are
+      url: this.currentUrl,
       action: 'join'
     });
 
     const event = await createEvent(
       this.privateKey,
-      10042, // Presence kind
+      10042,
       content,
       [['d', this.currentChannelId]]
     );
@@ -1030,13 +772,11 @@ class BarcNostrClient {
       relay.publish(event);
     }
 
-    // Also add self to users
     this.users.set(this.publicKey, {
       name: displayName,
       lastSeen: Date.now()
     });
 
-    // Update global activity for self
     if (this.currentUrl) {
       if (!this.globalActivity.has(this.currentUrl)) {
         this.globalActivity.set(this.currentUrl, { users: new Map(), lastUpdate: 0 });
@@ -1055,7 +795,6 @@ class BarcNostrClient {
       return null;
     }
 
-    // Check if any relay is connected
     const connectedRelays = this.relays.filter(r => r.connected);
     if (connectedRelays.length === 0) {
       console.error('sendMessage: No relays connected');
@@ -1064,7 +803,7 @@ class BarcNostrClient {
 
     const event = await createEvent(
       this.privateKey,
-      42, // Channel message kind
+      42,
       content,
       [['d', this.currentChannelId]]
     );
@@ -1081,7 +820,6 @@ class BarcNostrClient {
       return null;
     }
 
-    // Also trigger our own message callback so the message appears immediately
     if (this.messageCallback) {
       this.messageCallback({
         id: event.id,
@@ -1104,6 +842,229 @@ class BarcNostrClient {
     this.presenceCallback = callback;
   }
 
+  // Post to someone's wall (HomeScreen) - uses p-tag to reference the wall owner
+  // This is a bare-bones post to a pubkey address
+  async postToWall(targetPubkey, content) {
+    if (!content.trim()) {
+      console.error('postToWall: Empty content');
+      return null;
+    }
+
+    const connectedRelays = this.relays.filter(r => r.connected);
+    if (connectedRelays.length === 0) {
+      console.error('postToWall: No relays connected');
+      return null;
+    }
+
+    // Use kind 1 (short text note) with p-tag pointing to the wall owner
+    // This keeps it as simple as possible while still being addressable
+    const event = await createEvent(
+      this.privateKey,
+      1, // Standard text note
+      content,
+      [
+        ['p', targetPubkey], // Reference to whose wall this is on
+        ['barc-wall', targetPubkey] // Custom tag to identify wall posts
+      ]
+    );
+
+    let published = false;
+    for (const relay of connectedRelays) {
+      if (relay.publish(event)) {
+        published = true;
+      }
+    }
+
+    if (!published) {
+      console.error('postToWall: Failed to publish to any relay');
+      return null;
+    }
+
+    return event;
+  }
+
+  // Fetch posts that mention/tag a pubkey (from other users)
+  async fetchMentions(targetPubkey, limit = 50) {
+    const connectedRelays = this.relays.filter(r => r.connected);
+    if (connectedRelays.length === 0) {
+      return [];
+    }
+
+    const posts = [];
+    const seenIds = new Set();
+
+    // Query for events that tag this pubkey (NIP-01 p-tag)
+    // Common kinds: 1 (text note), 6 (repost), 7 (reaction), 9735 (zap receipt)
+    const filter = {
+      kinds: [1, 6, 7, 9735],
+      '#p': [targetPubkey],
+      limit
+    };
+
+    const fetchPromises = connectedRelays.map(relay => {
+      return new Promise((resolve) => {
+        const timeout = setTimeout(() => resolve(), 5000);
+
+        relay.subscribe(filter, (event) => {
+          if (!seenIds.has(event.id)) {
+            seenIds.add(event.id);
+            posts.push(this.parseEventToPost(event));
+          }
+        }, () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+      });
+    });
+
+    await Promise.all(fetchPromises);
+
+    // Sort by timestamp descending (newest first)
+    posts.sort((a, b) => b.timestamp - a.timestamp);
+
+    return posts;
+  }
+
+  // Fetch posts authored by a pubkey (their own posts)
+  async fetchUserPosts(targetPubkey, limit = 50) {
+    const connectedRelays = this.relays.filter(r => r.connected);
+    if (connectedRelays.length === 0) {
+      return [];
+    }
+
+    const posts = [];
+    const seenIds = new Set();
+
+    // Query for events authored by this pubkey
+    // Common kinds: 1 (text note), 6 (repost), 30023 (long-form)
+    const filter = {
+      kinds: [1, 6, 30023],
+      authors: [targetPubkey],
+      limit
+    };
+
+    const fetchPromises = connectedRelays.map(relay => {
+      return new Promise((resolve) => {
+        const timeout = setTimeout(() => resolve(), 5000);
+
+        relay.subscribe(filter, (event) => {
+          if (!seenIds.has(event.id)) {
+            seenIds.add(event.id);
+            posts.push(this.parseEventToPost(event));
+          }
+        }, () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+      });
+    });
+
+    await Promise.all(fetchPromises);
+
+    // Sort by timestamp descending (newest first)
+    posts.sort((a, b) => b.timestamp - a.timestamp);
+
+    return posts;
+  }
+
+  // Parse a raw Nostr event into a structured post object
+  parseEventToPost(event) {
+    const post = {
+      id: event.id,
+      pubkey: event.pubkey,
+      name: this.getUserName(event.pubkey),
+      content: event.content,
+      timestamp: event.created_at * 1000,
+      kind: event.kind,
+      kindLabel: this.getKindLabel(event.kind),
+      tags: event.tags,
+      isOwn: event.pubkey === this.publicKey,
+      images: [],
+      links: [],
+      mentionedPubkeys: []
+    };
+
+    // Extract images from content (common image URLs)
+    const imageRegex = /(https?:\/\/[^\s]+\.(?:jpg|jpeg|png|gif|webp))/gi;
+    const imageMatches = event.content.match(imageRegex);
+    if (imageMatches) {
+      post.images = [...new Set(imageMatches)];
+    }
+
+    // Extract links from content
+    const linkRegex = /(https?:\/\/[^\s]+)/gi;
+    const linkMatches = event.content.match(linkRegex);
+    if (linkMatches) {
+      post.links = [...new Set(linkMatches)].filter(l => !post.images.includes(l));
+    }
+
+    // Extract mentioned pubkeys from p-tags
+    for (const tag of event.tags) {
+      if (tag[0] === 'p' && tag[1]) {
+        post.mentionedPubkeys.push(tag[1]);
+      }
+    }
+
+    // For reposts (kind 6), the content might be the original event JSON
+    if (event.kind === 6 && event.content) {
+      try {
+        const originalEvent = JSON.parse(event.content);
+        post.repostedEvent = this.parseEventToPost(originalEvent);
+      } catch {
+        // Content isn't valid JSON, just use as is
+      }
+    }
+
+    // For reactions (kind 7), content is the reaction emoji
+    if (event.kind === 7) {
+      post.reaction = event.content || '+';
+      // Find what event they're reacting to
+      for (const tag of event.tags) {
+        if (tag[0] === 'e' && tag[1]) {
+          post.reactedToEventId = tag[1];
+          break;
+        }
+      }
+    }
+
+    // For zap receipts (kind 9735), extract amount
+    if (event.kind === 9735) {
+      for (const tag of event.tags) {
+        if (tag[0] === 'bolt11' && tag[1]) {
+          // Basic extraction of amount from bolt11 invoice
+          post.zapInvoice = tag[1];
+        }
+        if (tag[0] === 'description' && tag[1]) {
+          try {
+            const zapRequest = JSON.parse(tag[1]);
+            post.zapMessage = zapRequest.content;
+          } catch {
+            // Not valid JSON
+          }
+        }
+      }
+    }
+
+    return post;
+  }
+
+  // Get human-readable label for event kind
+  getKindLabel(kind) {
+    const kinds = {
+      1: 'note',
+      6: 'repost',
+      7: 'reaction',
+      9735: 'zap',
+      30023: 'article'
+    };
+    return kinds[kind] || `kind ${kind}`;
+  }
+
+  // Keep old method for backwards compatibility
+  async fetchWallPosts(targetPubkey, limit = 50) {
+    return this.fetchMentions(targetPubkey, limit);
+  }
+
   disconnect() {
     this.leaveChannel();
     for (const relay of this.relays) {
@@ -1114,10 +1075,4 @@ class BarcNostrClient {
 }
 
 // Export for use in extension
-if (typeof window !== 'undefined') {
-  window.BarcNostrClient = BarcNostrClient;
-  window.generatePrivateKey = generatePrivateKey;
-  window.getPublicKey = getPublicKey;
-}
-
 export { BarcNostrClient, generatePrivateKey, getPublicKey, DEFAULT_RELAYS };

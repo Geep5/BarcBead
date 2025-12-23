@@ -41,7 +41,25 @@
             <span class="logo-icon">&#9673;</span>
             <span class="logo-text">Barc</span>
           </div>
-          <button id="settings-btn" class="btn icon" title="Settings">&#9881;</button>
+          <div class="header-actions">
+            <button id="my-profile-btn" class="btn icon profile-btn" title="My Profile">&#128100;</button>
+            <button id="settings-btn" class="btn icon" title="Settings">&#9881;</button>
+          </div>
+        </div>
+
+        <div class="sidebar-section profile-search-section">
+          <h3>Find Profile</h3>
+          <div class="profile-search">
+            <input type="text" id="profile-search-input" placeholder="npub1... or hex pubkey">
+            <button id="profile-search-btn" class="btn primary small">Go</button>
+          </div>
+        </div>
+
+        <div class="sidebar-section profile-tabs-section hidden" id="profile-tabs-section">
+          <h3>Open Profiles</h3>
+          <div id="profile-tabs-list" class="tabs-list">
+            <!-- Open profile tabs will be listed here -->
+          </div>
         </div>
 
         <div class="sidebar-section">
@@ -79,6 +97,39 @@
           <div class="empty-icon">&#128172;</div>
           <h2>Select a tab to start chatting</h2>
           <p>Choose a tab from the sidebar to see who else is viewing that page</p>
+        </div>
+
+        <!-- Profile view -->
+        <div id="profile-container" class="hidden">
+          <div class="profile-header">
+            <div class="profile-info">
+              <div class="profile-avatar" id="profile-avatar">&#128100;</div>
+              <div class="profile-details">
+                <div id="profile-name" class="profile-name">User</div>
+                <div id="profile-pubkey" class="profile-pubkey">npub1...</div>
+              </div>
+            </div>
+            <div class="profile-actions">
+              <button id="close-profile-btn" class="btn icon close-btn" title="Close profile">&times;</button>
+            </div>
+          </div>
+
+          <div class="profile-feed-section">
+            <div class="profile-tabs">
+              <button class="profile-tab active" data-tab="mentions">Mentions</button>
+              <button class="profile-tab" data-tab="posts">Their Posts</button>
+            </div>
+            <div id="profile-feed" class="profile-feed">
+              <!-- Feed items will appear here -->
+            </div>
+            <div id="profile-loading" class="profile-loading hidden">
+              <span class="loading-spinner"></span>
+              <span>Loading...</span>
+            </div>
+            <div id="profile-empty" class="profile-empty hidden">
+              No posts found
+            </div>
+          </div>
         </div>
 
         <div id="chat-container" class="hidden">

@@ -277,8 +277,58 @@ async function handleMessage(request, sender) {
       if (!nostrClient) {
         return { error: 'Not connected' };
       }
-      const event = await nostrClient.sendMessage(request.content);
+      // If url is provided, use it (for profile walls), otherwise use current channel
+      const targetUrl = request.url || currentChannelUrl;
+      const event = await nostrClient.sendMessage(request.content, targetUrl);
       return { success: !!event, eventId: event?.id };
+    }
+
+    case 'POST_TO_WALL': {
+      if (!nostrClient) {
+        return { error: 'Not connected' };
+      }
+      // Post to someone's wall using their pubkey as the address
+      const event = await nostrClient.postToWall(request.targetPubkey, request.content);
+      return { success: !!event, eventId: event?.id };
+    }
+
+    case 'FETCH_WALL_POSTS': {
+      if (!nostrClient) {
+        return { posts: [], error: 'Not connected' };
+      }
+      try {
+        const posts = await nostrClient.fetchWallPosts(request.targetPubkey, request.limit || 50);
+        return { posts };
+      } catch (error) {
+        console.error('Failed to fetch wall posts:', error);
+        return { posts: [], error: error.message };
+      }
+    }
+
+    case 'FETCH_MENTIONS': {
+      if (!nostrClient) {
+        return { posts: [], error: 'Not connected' };
+      }
+      try {
+        const posts = await nostrClient.fetchMentions(request.targetPubkey, request.limit || 50);
+        return { posts };
+      } catch (error) {
+        console.error('Failed to fetch mentions:', error);
+        return { posts: [], error: error.message };
+      }
+    }
+
+    case 'FETCH_USER_POSTS': {
+      if (!nostrClient) {
+        return { posts: [], error: 'Not connected' };
+      }
+      try {
+        const posts = await nostrClient.fetchUserPosts(request.targetPubkey, request.limit || 50);
+        return { posts };
+      } catch (error) {
+        console.error('Failed to fetch user posts:', error);
+        return { posts: [], error: error.message };
+      }
     }
 
     case 'SEND_DM': {
