@@ -706,11 +706,14 @@ class BarcNostrClient {
 
     // Subscribe to channel messages
     // Using kind 42 (channel message) with 'd' tag for channel ID
+    // Fetch up to 10 messages from the last week
+    const oneWeekAgo = Math.floor(Date.now() / 1000) - (7 * 24 * 60 * 60);
     const filters = [
       {
         kinds: [42], // Channel message
         '#d': [this.currentChannelId],
-        since: Math.floor(Date.now() / 1000) - 3600 // Last hour
+        since: oneWeekAgo,
+        limit: 10 // Get last 10 messages
       },
       {
         kinds: [10042], // Presence (ephemeral-ish)
