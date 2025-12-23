@@ -45,6 +45,13 @@
         </div>
 
         <div class="sidebar-section">
+          <h3>Pinned Channels</h3>
+          <div id="pinned-list" class="tabs-list">
+            <!-- Pinned channels will be listed here -->
+          </div>
+        </div>
+
+        <div class="sidebar-section">
           <h3>Your Tabs</h3>
           <div id="tabs-list" class="tabs-list">
             <!-- Tabs will be listed here -->
@@ -80,8 +87,11 @@
               <div id="chat-title" class="chat-title">Page Title</div>
               <div id="chat-url" class="chat-url">https://example.com</div>
             </div>
-            <div class="chat-users">
-              <span id="user-count">0</span> people here
+            <div class="chat-actions">
+              <button id="pin-btn" class="btn icon pin-btn" title="Pin channel">&#128205;</button>
+              <div class="chat-users">
+                <span id="user-count">0</span> people here
+              </div>
             </div>
           </div>
 

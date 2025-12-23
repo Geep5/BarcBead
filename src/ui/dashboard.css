@@ -351,6 +351,73 @@ body {
   flex-shrink: 0;
 }
 
+/* Chat actions */
+.chat-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+/* Pin button */
+.pin-btn {
+  width: 36px;
+  height: 36px;
+  font-size: 16px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+}
+
+.pin-btn:hover {
+  background: var(--border);
+  border-color: var(--accent);
+}
+
+.pin-btn.pinned {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+/* Tab actions (for pinned items) */
+.tab-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.unpin-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.unpin-btn:hover {
+  background: var(--accent);
+  color: white;
+}
+
+/* Pinned tab styling */
+.tab-item.pinned {
+  background: rgba(233, 69, 96, 0.05);
+  border: 1px solid rgba(233, 69, 96, 0.2);
+}
+
+.tab-item.pinned:hover {
+  border-color: var(--accent);
+}
+
 /* Users bar */
 .users-bar {
   display: flex;

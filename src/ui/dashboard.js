@@ -3,8 +3,10 @@
 class BarcDashboard {
   constructor() {
     this.browserTabs = []; // All browser tabs
+    this.pinnedChannels = []; // Pinned/locked channels that persist
     this.selectedTabId = null; // Currently selected tab for chat
     this.selectedUrl = null;
+    this.selectedTitle = null;
     this.tabUserCounts = new Map(); // url -> user count
 
     // DOM elements
@@ -14,9 +16,11 @@ class BarcDashboard {
     this.importKeyInput = document.getElementById('import-key-input');
     this.importKeyBtn = document.getElementById('import-key-btn');
 
+    this.pinnedList = document.getElementById('pinned-list');
     this.tabsList = document.getElementById('tabs-list');
     this.activityList = document.getElementById('activity-list');
     this.connectionStatus = document.getElementById('connection-status');
+    this.pinBtn = document.getElementById('pin-btn');
 
     this.noSelection = document.getElementById('no-selection');
     this.chatContainer = document.getElementById('chat-container');
@@ -110,6 +114,18 @@ class BarcDashboard {
 
     // Listen for messages from background
     chrome.runtime.onMessage.addListener((msg) => this.handleBackgroundMessage(msg));
+
+    // Listen for chrome tab changes to auto-update
+    chrome.tabs.onCreated.addListener(() => this.loadBrowserTabs());
+    chrome.tabs.onRemoved.addListener(() => this.loadBrowserTabs());
+    chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+      if (changeInfo.url || changeInfo.title) {
+        this.loadBrowserTabs();
+      }
+    });
+
+    // Pin button
+    this.pinBtn?.addEventListener('click', () => this.togglePinCurrentChannel());
   }
 
   async init() {
@@ -134,6 +150,9 @@ class BarcDashboard {
         }
       }
 
+      // Load pinned channels from storage
+      await this.loadPinnedChannels();
+
       // Load browser tabs
       await this.loadBrowserTabs();
 
@@ -157,6 +176,16 @@ class BarcDashboard {
     }
   }
 
+  async loadPinnedChannels() {
+    const { pinnedChannels } = await chrome.storage.local.get(['pinnedChannels']);
+    this.pinnedChannels = pinnedChannels || [];
+    this.renderPinnedChannels();
+  }
+
+  async savePinnedChannels() {
+    await chrome.storage.local.set({ pinnedChannels: this.pinnedChannels });
+  }
+
   async loadBrowserTabs() {
     try {
       const tabs = await chrome.tabs.query({});
@@ -174,6 +203,7 @@ class BarcDashboard {
       }
 
       this.renderTabs();
+      this.renderPinnedChannels();
     } catch (error) {
       console.error('Failed to load tabs:', error);
     }
@@ -207,31 +237,126 @@ class BarcDashboard {
       el.addEventListener('click', () => {
         const tabId = parseInt(el.dataset.tabId);
         const url = el.dataset.url;
-        this.selectTab(tabId, url);
+        const title = el.querySelector('.tab-title')?.textContent || 'Page';
+        this.selectTab(tabId, url, title);
       });
     });
   }
 
-  async selectTab(tabId, url) {
+  renderPinnedChannels() {
+    if (!this.pinnedList) return;
+
+    if (this.pinnedChannels.length === 0) {
+      this.pinnedList.innerHTML = '<div class="no-tabs">No pinned channels</div>';
+      return;
+    }
+
+    this.pinnedList.innerHTML = this.pinnedChannels.map(channel => {
+      const count = this.tabUserCounts.get(channel.url) || 0;
+      const isActive = this.selectedUrl === channel.url;
+      const hostname = this.getHostname(channel.url);
+
+      return `
+        <div class="tab-item pinned ${isActive ? 'active' : ''}" data-url="${this.escapeHtml(channel.url)}">
+          <div class="tab-favicon">&#128204;</div>
+          <div class="tab-info">
+            <div class="tab-title">${this.escapeHtml(channel.title || hostname)}</div>
+            <div class="tab-url">${this.escapeHtml(hostname)}</div>
+          </div>
+          <div class="tab-actions">
+            <button class="unpin-btn" data-url="${this.escapeHtml(channel.url)}" title="Unpin">&#10005;</button>
+            <div class="tab-count ${count === 0 ? 'empty' : ''}">${count}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    // Add click handlers for pinned channels
+    this.pinnedList.querySelectorAll('.tab-item').forEach(el => {
+      el.addEventListener('click', (e) => {
+        if (e.target.classList.contains('unpin-btn')) return;
+        const url = el.dataset.url;
+        const title = el.querySelector('.tab-title')?.textContent || 'Page';
+        this.selectTab(null, url, title);
+      });
+    });
+
+    // Add unpin handlers
+    this.pinnedList.querySelectorAll('.unpin-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const url = btn.dataset.url;
+        this.unpinChannel(url);
+      });
+    });
+  }
+
+  isChannelPinned(url) {
+    return this.pinnedChannels.some(c => c.url === url);
+  }
+
+  async pinChannel(url, title) {
+    if (this.isChannelPinned(url)) return;
+
+    this.pinnedChannels.push({ url, title, pinnedAt: Date.now() });
+    await this.savePinnedChannels();
+    this.renderPinnedChannels();
+    this.updatePinButton();
+  }
+
+  async unpinChannel(url) {
+    this.pinnedChannels = this.pinnedChannels.filter(c => c.url !== url);
+    await this.savePinnedChannels();
+    this.renderPinnedChannels();
+    this.updatePinButton();
+  }
+
+  async togglePinCurrentChannel() {
+    if (!this.selectedUrl) return;
+
+    if (this.isChannelPinned(this.selectedUrl)) {
+      await this.unpinChannel(this.selectedUrl);
+    } else {
+      await this.pinChannel(this.selectedUrl, this.selectedTitle);
+    }
+  }
+
+  updatePinButton() {
+    if (!this.pinBtn) return;
+
+    const isPinned = this.isChannelPinned(this.selectedUrl);
+    this.pinBtn.innerHTML = isPinned ? '&#128204;' : '&#128205;';
+    this.pinBtn.title = isPinned ? 'Unpin channel' : 'Pin channel';
+    this.pinBtn.classList.toggle('pinned', isPinned);
+  }
+
+  async selectTab(tabId, url, title = 'Page') {
     if (this.selectedUrl === url) return;
 
     this.selectedTabId = tabId;
     this.selectedUrl = url;
+    this.selectedTitle = title;
 
     // Update UI
     this.noSelection.classList.add('hidden');
     this.chatContainer.classList.remove('hidden');
 
     const tab = this.browserTabs.find(t => t.id === tabId);
-    this.chatTitle.textContent = tab?.title || 'Page';
+    this.chatTitle.textContent = tab?.title || title;
     this.chatUrl.textContent = url;
+
+    // Update pin button state
+    this.updatePinButton();
 
     // Clear messages
     this.messagesContainer.innerHTML = '';
 
-    // Mark as active in list
+    // Mark as active in both lists
     this.tabsList.querySelectorAll('.tab-item').forEach(el => {
-      el.classList.toggle('active', parseInt(el.dataset.tabId) === tabId);
+      el.classList.toggle('active', el.dataset.url === url);
+    });
+    this.pinnedList?.querySelectorAll('.tab-item').forEach(el => {
+      el.classList.toggle('active', el.dataset.url === url);
     });
 
     // Join channel and get messages
