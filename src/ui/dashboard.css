@@ -1294,3 +1294,182 @@ body {
   background: linear-gradient(135deg, var(--accent), #ff9a8b);
   color: white;
 }
+
+/* Following section */
+.following-section {
+  flex: 0 0 auto;
+}
+
+.count-badge {
+  font-size: 11px;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  padding: 2px 6px;
+  border-radius: 10px;
+  margin-left: 6px;
+}
+
+/* Following list item */
+.following-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-bottom: 6px;
+}
+
+.following-item:hover {
+  background: var(--border);
+}
+
+.following-item .following-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: white;
+  flex-shrink: 0;
+  background-size: cover;
+  background-position: center;
+}
+
+.following-item .following-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.following-item .following-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.following-item .following-nip05 {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Follow button */
+.follow-btn {
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.follow-btn.following {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+}
+
+.follow-btn.following:hover {
+  background: #e94560;
+  color: white;
+  border-color: #e94560;
+}
+
+/* @mention picker */
+.mention-picker {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 60px;
+  max-height: 200px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 -4px 16px rgba(0,0,0,0.3);
+  overflow-y: auto;
+  z-index: 1000;
+  margin-bottom: 4px;
+}
+
+.mention-picker.hidden {
+  display: none;
+}
+
+.mention-list {
+  padding: 4px;
+}
+
+.mention-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.mention-item:hover,
+.mention-item.selected {
+  background: var(--bg-tertiary);
+}
+
+.mention-item .mention-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: white;
+  flex-shrink: 0;
+  background-size: cover;
+  background-position: center;
+}
+
+.mention-item .mention-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.mention-item .mention-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.mention-item .mention-pubkey {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: monospace;
+}
+
+.mention-empty {
+  padding: 12px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* Input wrapper needs relative positioning for mention picker */
+.input-wrapper {
+  position: relative;
+}
+
+/* Empty list placeholder */
+.empty-list {
+  padding: 12px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-style: italic;
+}

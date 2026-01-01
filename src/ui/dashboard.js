@@ -14,6 +14,10 @@ class BarcDashboard {
     this.currentProfile = null; // Currently viewing profile {pubkey, name}
     this.myPublicKey = null; // User's own public key
 
+    // Following state
+    this.followingList = []; // Array of {pubkey, name, picture, nip05}
+    this.mentionSelectedIndex = 0; // Selected index in mention autocomplete
+
     // DOM elements
     this.setupOverlay = document.getElementById('setup-overlay');
     this.mainLayout = document.getElementById('main-layout');
@@ -67,6 +71,15 @@ class BarcDashboard {
     // Profile search elements
     this.profileSearchInput = document.getElementById('profile-search-input');
     this.profileSearchBtn = document.getElementById('profile-search-btn');
+
+    // Following elements
+    this.followingList = document.getElementById('following-list');
+    this.followingCount = document.getElementById('following-count');
+    this.followBtn = document.getElementById('follow-btn');
+
+    // Mention picker elements
+    this.mentionPicker = document.getElementById('mention-picker');
+    this.mentionList = document.getElementById('mention-list');
 
     // Bech32 alphabet for npub decoding
     this.BECH32_ALPHABET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
@@ -170,6 +183,20 @@ class BarcDashboard {
         this.handleProfileSearch();
       }
     });
+
+    // Follow button
+    this.followBtn?.addEventListener('click', () => this.toggleFollow());
+
+    // @mention handling
+    this.messageInput?.addEventListener('input', (e) => this.handleMentionInput(e));
+    this.messageInput?.addEventListener('keydown', (e) => this.handleMentionKeydown(e));
+
+    // Close mention picker when clicking outside
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.input-wrapper')) {
+        this.hideMentionPicker();
+      }
+    });
   }
 
   async init() {
@@ -205,6 +232,9 @@ class BarcDashboard {
       if (status.globalActivity) {
         this.updateGlobalActivity(status.globalActivity);
       }
+
+      // Load following list
+      await this.loadFollowingList();
     } catch (error) {
       console.error('Dashboard init error:', error);
       this.showScreen('setup');
@@ -834,6 +864,9 @@ class BarcDashboard {
     // Mark active in sidebar
     this.updateProfileTabsActiveState();
 
+    // Update follow button state
+    this.updateFollowButton();
+
     // Clear selection from other tabs
     this.tabsList.querySelectorAll('.tab-item').forEach(el => el.classList.remove('active'));
     this.pinnedList?.querySelectorAll('.tab-item').forEach(el => el.classList.remove('active'));
@@ -1175,6 +1208,268 @@ class BarcDashboard {
 
     // Open the profile
     this.openProfile(parsed.pubkey, 'User');
+  }
+
+  // ==================== Following / Friends List ====================
+
+  async loadFollowingList() {
+    try {
+      const result = await this.sendToBackground({ type: 'GET_FOLLOWING' });
+      this.following = result.following || [];
+      this.renderFollowingList();
+    } catch (error) {
+      console.error('Failed to load following list:', error);
+      this.following = [];
+    }
+  }
+
+  renderFollowingList() {
+    const listEl = document.getElementById('following-list');
+    const countEl = document.getElementById('following-count');
+
+    if (!listEl) return;
+
+    // Update count
+    if (countEl) {
+      countEl.textContent = this.following.length;
+    }
+
+    if (this.following.length === 0) {
+      listEl.innerHTML = '<div class="empty-list">Not following anyone yet</div>';
+      return;
+    }
+
+    listEl.innerHTML = this.following.map(user => {
+      const avatarColor = this.getAvatarColor(user.pubkey);
+      const initial = (user.name || user.displayName || 'A').charAt(0).toUpperCase();
+      const avatarStyle = user.picture
+        ? `background-image: url('${this.escapeHtml(user.picture)}')`
+        : `background: ${avatarColor}`;
+
+      return `
+        <div class="following-item" data-pubkey="${this.escapeHtml(user.pubkey)}">
+          <div class="following-avatar" style="${avatarStyle}">${user.picture ? '' : initial}</div>
+          <div class="following-info">
+            <div class="following-name">${this.escapeHtml(user.name || user.displayName || this.truncatePubkey(user.pubkey))}</div>
+            ${user.nip05 ? `<div class="following-nip05">${this.escapeHtml(user.nip05)}</div>` : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    // Add click handlers
+    listEl.querySelectorAll('.following-item').forEach(el => {
+      el.addEventListener('click', () => {
+        const pubkey = el.dataset.pubkey;
+        const user = this.following.find(u => u.pubkey === pubkey);
+        this.openProfile(pubkey, user?.name || user?.displayName || 'User');
+      });
+    });
+  }
+
+  async toggleFollow() {
+    if (!this.currentProfile || this.currentProfile.isOwn) return;
+
+    const pubkey = this.currentProfile.pubkey;
+    const isCurrentlyFollowing = this.following.some(u => u.pubkey === pubkey);
+
+    // Disable button during request
+    this.followBtn.disabled = true;
+    this.followBtn.textContent = isCurrentlyFollowing ? 'Unfollowing...' : 'Following...';
+
+    try {
+      if (isCurrentlyFollowing) {
+        await this.sendToBackground({ type: 'UNFOLLOW_USER', pubkey });
+      } else {
+        await this.sendToBackground({
+          type: 'FOLLOW_USER',
+          pubkey,
+          petname: this.currentProfile.name
+        });
+      }
+
+      // Reload following list
+      await this.loadFollowingList();
+
+      // Update button state
+      this.updateFollowButton();
+    } catch (error) {
+      console.error('Failed to toggle follow:', error);
+    }
+
+    this.followBtn.disabled = false;
+  }
+
+  updateFollowButton() {
+    if (!this.followBtn || !this.currentProfile) return;
+
+    // Don't show follow button for own profile
+    if (this.currentProfile.isOwn) {
+      this.followBtn.classList.add('hidden');
+      return;
+    }
+
+    this.followBtn.classList.remove('hidden');
+
+    const isFollowing = this.following.some(u => u.pubkey === this.currentProfile.pubkey);
+
+    if (isFollowing) {
+      this.followBtn.textContent = 'Following';
+      this.followBtn.classList.add('following');
+      this.followBtn.title = 'Click to unfollow';
+    } else {
+      this.followBtn.textContent = 'Follow';
+      this.followBtn.classList.remove('following');
+      this.followBtn.title = 'Follow this user';
+    }
+  }
+
+  // ==================== @Mention Autocomplete ====================
+
+  handleMentionInput(e) {
+    const input = e.target;
+    const value = input.value;
+    const cursorPos = input.selectionStart;
+
+    // Find if we're typing a mention (@ followed by text)
+    const textBeforeCursor = value.substring(0, cursorPos);
+    const mentionMatch = textBeforeCursor.match(/@(\w*)$/);
+
+    if (mentionMatch) {
+      const query = mentionMatch[1].toLowerCase();
+      this.showMentionPicker(query);
+    } else {
+      this.hideMentionPicker();
+    }
+  }
+
+  handleMentionKeydown(e) {
+    if (!this.mentionPicker || this.mentionPicker.classList.contains('hidden')) {
+      return;
+    }
+
+    const items = this.mentionPicker.querySelectorAll('.mention-item');
+    if (items.length === 0) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      this.mentionSelectedIndex = Math.min(this.mentionSelectedIndex + 1, items.length - 1);
+      this.updateMentionSelection();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      this.mentionSelectedIndex = Math.max(this.mentionSelectedIndex - 1, 0);
+      this.updateMentionSelection();
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      if (items[this.mentionSelectedIndex]) {
+        e.preventDefault();
+        const pubkey = items[this.mentionSelectedIndex].dataset.pubkey;
+        const name = items[this.mentionSelectedIndex].dataset.name;
+        this.insertMention(pubkey, name);
+      }
+    } else if (e.key === 'Escape') {
+      this.hideMentionPicker();
+    }
+  }
+
+  showMentionPicker(query) {
+    if (!this.mentionPicker || !this.mentionList) return;
+
+    // Filter following list by query
+    let matches = this.following.filter(user => {
+      const name = (user.name || user.displayName || '').toLowerCase();
+      const nip05 = (user.nip05 || '').toLowerCase();
+      return name.includes(query) || nip05.includes(query);
+    });
+
+    // Limit to 5 results
+    matches = matches.slice(0, 5);
+
+    if (matches.length === 0) {
+      this.mentionList.innerHTML = '<div class="mention-empty">No matches found</div>';
+    } else {
+      this.mentionList.innerHTML = matches.map((user, index) => {
+        const avatarColor = this.getAvatarColor(user.pubkey);
+        const initial = (user.name || user.displayName || 'A').charAt(0).toUpperCase();
+        const avatarStyle = user.picture
+          ? `background-image: url('${this.escapeHtml(user.picture)}')`
+          : `background: ${avatarColor}`;
+        const displayName = user.name || user.displayName || this.truncatePubkey(user.pubkey);
+
+        return `
+          <div class="mention-item ${index === 0 ? 'selected' : ''}"
+               data-pubkey="${this.escapeHtml(user.pubkey)}"
+               data-name="${this.escapeHtml(displayName)}">
+            <div class="mention-avatar" style="${avatarStyle}">${user.picture ? '' : initial}</div>
+            <div class="mention-info">
+              <div class="mention-name">${this.escapeHtml(displayName)}</div>
+              <div class="mention-pubkey">${user.pubkey.slice(0, 8)}...</div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      // Add click handlers
+      this.mentionList.querySelectorAll('.mention-item').forEach(el => {
+        el.addEventListener('click', () => {
+          this.insertMention(el.dataset.pubkey, el.dataset.name);
+        });
+      });
+    }
+
+    this.mentionSelectedIndex = 0;
+    this.mentionPicker.classList.remove('hidden');
+  }
+
+  hideMentionPicker() {
+    if (this.mentionPicker) {
+      this.mentionPicker.classList.add('hidden');
+    }
+  }
+
+  updateMentionSelection() {
+    const items = this.mentionPicker?.querySelectorAll('.mention-item');
+    if (!items) return;
+
+    items.forEach((item, index) => {
+      item.classList.toggle('selected', index === this.mentionSelectedIndex);
+    });
+  }
+
+  insertMention(pubkey, name) {
+    const input = this.messageInput;
+    if (!input) return;
+
+    const value = input.value;
+    const cursorPos = input.selectionStart;
+
+    // Find the @ that started this mention
+    const textBeforeCursor = value.substring(0, cursorPos);
+    const mentionMatch = textBeforeCursor.match(/@(\w*)$/);
+
+    if (mentionMatch) {
+      const mentionStart = cursorPos - mentionMatch[0].length;
+      const beforeMention = value.substring(0, mentionStart);
+      const afterMention = value.substring(cursorPos);
+
+      // Insert the mention with nostr: prefix for NIP-27 compatibility
+      // Format: @name (with pubkey stored for sending)
+      const mentionText = `@${name} `;
+
+      input.value = beforeMention + mentionText + afterMention;
+
+      // Store the mention mapping for when we send
+      if (!this.pendingMentions) {
+        this.pendingMentions = [];
+      }
+      this.pendingMentions.push({ name, pubkey });
+
+      // Move cursor after the mention
+      const newCursorPos = beforeMention.length + mentionText.length;
+      input.setSelectionRange(newCursorPos, newCursorPos);
+    }
+
+    this.hideMentionPicker();
+    input.focus();
   }
 }
 

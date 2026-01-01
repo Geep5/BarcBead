@@ -406,6 +406,72 @@ async function handleMessage(request, sender) {
       }
     }
 
+    // NIP-02: Contact List / Following
+    case 'GET_FOLLOWING': {
+      if (!nostrClient) {
+        return { following: [], error: 'Not connected' };
+      }
+      try {
+        const following = await nostrClient.getFollowingWithMetadata();
+        return { following };
+      } catch (error) {
+        console.error('Failed to fetch following:', error);
+        return { following: [], error: error.message };
+      }
+    }
+
+    case 'FOLLOW_USER': {
+      if (!nostrClient) {
+        return { success: false, error: 'Not connected' };
+      }
+      try {
+        const result = await nostrClient.followUser(request.pubkey, request.petname);
+        return result;
+      } catch (error) {
+        console.error('Failed to follow user:', error);
+        return { success: false, error: error.message };
+      }
+    }
+
+    case 'UNFOLLOW_USER': {
+      if (!nostrClient) {
+        return { success: false, error: 'Not connected' };
+      }
+      try {
+        const result = await nostrClient.unfollowUser(request.pubkey);
+        return result;
+      } catch (error) {
+        console.error('Failed to unfollow user:', error);
+        return { success: false, error: error.message };
+      }
+    }
+
+    case 'IS_FOLLOWING': {
+      if (!nostrClient) {
+        return { isFollowing: false, error: 'Not connected' };
+      }
+      try {
+        const isFollowing = await nostrClient.isFollowing(request.pubkey);
+        return { isFollowing };
+      } catch (error) {
+        console.error('Failed to check following status:', error);
+        return { isFollowing: false, error: error.message };
+      }
+    }
+
+    case 'FETCH_USER_METADATA': {
+      if (!nostrClient) {
+        return { metadata: null, error: 'Not connected' };
+      }
+      try {
+        const metadata = await nostrClient.fetchUserMetadata(request.pubkey);
+        return { metadata };
+      } catch (error) {
+        console.error('Failed to fetch user metadata:', error);
+        return { metadata: null, error: error.message };
+      }
+    }
+
     default:
       return { error: 'Unknown message type' };
   }

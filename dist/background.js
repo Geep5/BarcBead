@@ -1082,14 +1082,17 @@ async function nip04Decrypt(privateKeyHex, senderPubKeyHex, encryptedContent) {
   );
   return new TextDecoder().decode(plaintextBytes);
 }
-async function urlToChannelId(url) {
+function normalizeUrlForChannel(url) {
   try {
     const parsed = new URL(url);
-    const normalized = parsed.origin + parsed.pathname.replace(/\/$/, "");
-    return await sha256Hex(normalized);
+    const normalized = parsed.origin.toLowerCase() + parsed.pathname.replace(/\/$/, "");
+    return normalized;
   } catch {
-    return await sha256Hex(url);
+    return url;
   }
+}
+async function urlToChannelId(url) {
+  return normalizeUrlForChannel(url);
 }
 var NostrRelay = class {
   constructor(url) {
@@ -1431,13 +1434,15 @@ var BarcNostrClient = class {
     const filters = [
       {
         kinds: [42],
-        "#d": [this.currentChannelId],
+        "#r": [this.currentChannelId],
+        // Filter by 'r' tag (URL)
         since: oneWeekAgo,
         limit: 10
       },
       {
         kinds: [10042],
-        "#d": [this.currentChannelId],
+        "#r": [this.currentChannelId],
+        // Filter by 'r' tag (URL)
         since: Math.floor(Date.now() / 1e3) - 300
       }
     ];
@@ -1490,7 +1495,8 @@ var BarcNostrClient = class {
     const defaultSince = Math.floor(Date.now() / 1e3) - 30 * 24 * 60 * 60;
     const filter = {
       kinds: [42],
-      "#d": [channelId],
+      "#r": [channelId],
+      // Filter by 'r' tag (URL)
       since: since || defaultSince,
       limit
     };
@@ -1603,8 +1609,10 @@ var BarcNostrClient = class {
     const event = await createEvent(
       this.privateKey,
       10042,
+      // Presence announcement
       content,
-      [["d", this.currentChannelId]]
+      [["r", this.currentChannelId]]
+      // 'r' tag = URL reference
     );
     for (const relay of this.relays) {
       relay.publish(event);
@@ -1639,8 +1647,10 @@ var BarcNostrClient = class {
     const event = await createEvent(
       this.privateKey,
       42,
+      // NIP-28 channel message
       content,
-      [["d", channelId]]
+      [["r", channelId]]
+      // 'r' tag = URL reference (plaintext, human-readable)
     );
     let published = false;
     for (const relay of connectedRelays) {
@@ -1845,6 +1855,234 @@ var BarcNostrClient = class {
   // Keep old method for backwards compatibility
   async fetchWallPosts(targetPubkey, limit = 50) {
     return this.fetchMentions(targetPubkey, limit);
+  }
+  // NIP-02: Contact List (Following)
+  // Fetch the contact list for a pubkey
+  async fetchContactList(pubkey = null) {
+    const targetPubkey = pubkey || this.publicKey;
+    const connectedRelays = this.relays.filter((r) => r.connected);
+    if (connectedRelays.length === 0) {
+      return [];
+    }
+    const contacts = [];
+    const seenPubkeys = /* @__PURE__ */ new Set();
+    let latestEvent = null;
+    const filter = {
+      kinds: [3],
+      // NIP-02 contact list
+      authors: [targetPubkey],
+      limit: 1
+    };
+    const fetchPromises = connectedRelays.map((relay) => {
+      return new Promise((resolve) => {
+        const timeout = setTimeout(() => resolve(), 3e3);
+        relay.subscribe("contact-list-" + targetPubkey.slice(0, 8), [filter], (event) => {
+          if (!latestEvent || event.created_at > latestEvent.created_at) {
+            latestEvent = event;
+          }
+        }, () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+      });
+    });
+    await Promise.all(fetchPromises);
+    for (const relay of connectedRelays) {
+      relay.unsubscribe("contact-list-" + targetPubkey.slice(0, 8));
+    }
+    if (latestEvent) {
+      for (const tag of latestEvent.tags) {
+        if (tag[0] === "p" && tag[1] && !seenPubkeys.has(tag[1])) {
+          seenPubkeys.add(tag[1]);
+          contacts.push({
+            pubkey: tag[1],
+            relay: tag[2] || null,
+            // Optional relay hint
+            petname: tag[3] || null
+            // Optional petname/nickname
+          });
+        }
+      }
+    }
+    return contacts;
+  }
+  // NIP-02: Publish updated contact list (follow/unfollow)
+  async updateContactList(contacts) {
+    const connectedRelays = this.relays.filter((r) => r.connected);
+    if (connectedRelays.length === 0) {
+      console.error("updateContactList: No relays connected");
+      return null;
+    }
+    const tags = contacts.map((c) => {
+      const tag = ["p", c.pubkey];
+      if (c.relay) tag.push(c.relay);
+      if (c.petname) tag.push(c.petname);
+      return tag;
+    });
+    const event = await createEvent(
+      this.privateKey,
+      3,
+      "",
+      // Content is typically empty for contact lists
+      tags
+    );
+    let published = false;
+    for (const relay of connectedRelays) {
+      if (relay.publish(event)) {
+        published = true;
+      }
+    }
+    if (!published) {
+      console.error("updateContactList: Failed to publish to any relay");
+      return null;
+    }
+    console.log("Contact list updated with", contacts.length, "contacts");
+    return event;
+  }
+  // Follow a user (add to contact list)
+  async followUser(pubkey, petname = null) {
+    const currentContacts = await this.fetchContactList();
+    if (currentContacts.find((c) => c.pubkey === pubkey)) {
+      console.log("Already following", pubkey);
+      return { success: true, alreadyFollowing: true };
+    }
+    currentContacts.push({ pubkey, petname });
+    const event = await this.updateContactList(currentContacts);
+    return { success: !!event, contacts: currentContacts };
+  }
+  // Unfollow a user (remove from contact list)
+  async unfollowUser(pubkey) {
+    const currentContacts = await this.fetchContactList();
+    const updatedContacts = currentContacts.filter((c) => c.pubkey !== pubkey);
+    if (updatedContacts.length === currentContacts.length) {
+      console.log("Was not following", pubkey);
+      return { success: true, wasNotFollowing: true };
+    }
+    const event = await this.updateContactList(updatedContacts);
+    return { success: !!event, contacts: updatedContacts };
+  }
+  // Check if following a user
+  async isFollowing(pubkey) {
+    const contacts = await this.fetchContactList();
+    return contacts.some((c) => c.pubkey === pubkey);
+  }
+  // NIP-01: Fetch user metadata (kind 0)
+  async fetchUserMetadata(pubkey) {
+    const connectedRelays = this.relays.filter((r) => r.connected);
+    if (connectedRelays.length === 0) {
+      return null;
+    }
+    let latestEvent = null;
+    const filter = {
+      kinds: [0],
+      // User metadata
+      authors: [pubkey],
+      limit: 1
+    };
+    const fetchPromises = connectedRelays.map((relay) => {
+      return new Promise((resolve) => {
+        const timeout = setTimeout(() => resolve(), 3e3);
+        relay.subscribe("metadata-" + pubkey.slice(0, 8), [filter], (event) => {
+          if (!latestEvent || event.created_at > latestEvent.created_at) {
+            latestEvent = event;
+          }
+        }, () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+      });
+    });
+    await Promise.all(fetchPromises);
+    for (const relay of connectedRelays) {
+      relay.unsubscribe("metadata-" + pubkey.slice(0, 8));
+    }
+    if (latestEvent) {
+      try {
+        const metadata = JSON.parse(latestEvent.content);
+        return {
+          pubkey,
+          name: metadata.name || metadata.display_name || null,
+          displayName: metadata.display_name || metadata.name || null,
+          about: metadata.about || null,
+          picture: metadata.picture || null,
+          nip05: metadata.nip05 || null,
+          lud16: metadata.lud16 || null,
+          // Lightning address
+          banner: metadata.banner || null
+        };
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+  // Fetch metadata for multiple users (batch)
+  async fetchMultipleUserMetadata(pubkeys) {
+    const connectedRelays = this.relays.filter((r) => r.connected);
+    if (connectedRelays.length === 0 || pubkeys.length === 0) {
+      return /* @__PURE__ */ new Map();
+    }
+    const metadataMap = /* @__PURE__ */ new Map();
+    const latestEvents = /* @__PURE__ */ new Map();
+    const filter = {
+      kinds: [0],
+      authors: pubkeys,
+      limit: pubkeys.length
+    };
+    const fetchPromises = connectedRelays.map((relay) => {
+      return new Promise((resolve) => {
+        const timeout = setTimeout(() => resolve(), 5e3);
+        relay.subscribe("batch-metadata", [filter], (event) => {
+          const existing = latestEvents.get(event.pubkey);
+          if (!existing || event.created_at > existing.created_at) {
+            latestEvents.set(event.pubkey, event);
+          }
+        }, () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+      });
+    });
+    await Promise.all(fetchPromises);
+    for (const relay of connectedRelays) {
+      relay.unsubscribe("batch-metadata");
+    }
+    for (const [pubkey, event] of latestEvents) {
+      try {
+        const metadata = JSON.parse(event.content);
+        metadataMap.set(pubkey, {
+          pubkey,
+          name: metadata.name || metadata.display_name || null,
+          displayName: metadata.display_name || metadata.name || null,
+          about: metadata.about || null,
+          picture: metadata.picture || null,
+          nip05: metadata.nip05 || null
+        });
+      } catch {
+      }
+    }
+    return metadataMap;
+  }
+  // Get following list with metadata
+  async getFollowingWithMetadata() {
+    const contacts = await this.fetchContactList();
+    if (contacts.length === 0) {
+      return [];
+    }
+    const pubkeys = contacts.map((c) => c.pubkey);
+    const metadataMap = await this.fetchMultipleUserMetadata(pubkeys);
+    return contacts.map((contact) => {
+      const metadata = metadataMap.get(contact.pubkey);
+      return {
+        pubkey: contact.pubkey,
+        petname: contact.petname,
+        name: metadata?.name || metadata?.displayName || contact.petname || null,
+        displayName: metadata?.displayName || metadata?.name || null,
+        picture: metadata?.picture || null,
+        about: metadata?.about || null,
+        nip05: metadata?.nip05 || null
+      };
+    });
   }
   disconnect() {
     this.leaveChannel();
@@ -2159,6 +2397,67 @@ async function handleMessage(request, sender) {
       } catch (error) {
         console.error("Failed to fetch messages:", error);
         return { messages: [], error: error.message };
+      }
+    }
+    // NIP-02: Contact List / Following
+    case "GET_FOLLOWING": {
+      if (!nostrClient) {
+        return { following: [], error: "Not connected" };
+      }
+      try {
+        const following = await nostrClient.getFollowingWithMetadata();
+        return { following };
+      } catch (error) {
+        console.error("Failed to fetch following:", error);
+        return { following: [], error: error.message };
+      }
+    }
+    case "FOLLOW_USER": {
+      if (!nostrClient) {
+        return { success: false, error: "Not connected" };
+      }
+      try {
+        const result = await nostrClient.followUser(request.pubkey, request.petname);
+        return result;
+      } catch (error) {
+        console.error("Failed to follow user:", error);
+        return { success: false, error: error.message };
+      }
+    }
+    case "UNFOLLOW_USER": {
+      if (!nostrClient) {
+        return { success: false, error: "Not connected" };
+      }
+      try {
+        const result = await nostrClient.unfollowUser(request.pubkey);
+        return result;
+      } catch (error) {
+        console.error("Failed to unfollow user:", error);
+        return { success: false, error: error.message };
+      }
+    }
+    case "IS_FOLLOWING": {
+      if (!nostrClient) {
+        return { isFollowing: false, error: "Not connected" };
+      }
+      try {
+        const isFollowing = await nostrClient.isFollowing(request.pubkey);
+        return { isFollowing };
+      } catch (error) {
+        console.error("Failed to check following status:", error);
+        return { isFollowing: false, error: error.message };
+      }
+    }
+    case "FETCH_USER_METADATA": {
+      if (!nostrClient) {
+        return { metadata: null, error: "Not connected" };
+      }
+      try {
+        const metadata = await nostrClient.fetchUserMetadata(request.pubkey);
+        return { metadata };
+      } catch (error) {
+        console.error("Failed to fetch user metadata:", error);
+        return { metadata: null, error: error.message };
       }
     }
     default:
