@@ -1,7 +1,8 @@
 // Background service worker for Barc
 // Manages Nostr connections and coordinates with dashboard
 
-import { BarcNostrClient, generatePrivateKey, getPublicKey } from './lib/nostr.js';
+import { generatePrivateKey, getPublicKey } from './lib/nostr.js';
+import { EnhancedNostrClient } from './lib/nostr-enhanced.js';
 
 let nostrClient = null;
 let currentChannelUrl = null; // URL of the channel we're currently joined to
@@ -119,7 +120,7 @@ async function initClient(privateKey = null) {
   }
 
   // Create and initialize client
-  nostrClient = new BarcNostrClient();
+  nostrClient = new EnhancedNostrClient();
   await nostrClient.init(keyToUse);
 
   // Save the key if it was newly provided
@@ -155,6 +156,22 @@ async function initClient(privateKey = null) {
     broadcastToAll({ type: 'NEW_DM', dm, otherPubkey });
   });
 
+  // Monitor connection status
+  const checkConnectionStatus = () => {
+    if (nostrClient && nostrClient.relays) {
+      const connectedRelays = nostrClient.relays.filter(r => r.connected);
+      const connected = connectedRelays.length > 0;
+      console.log(`[Background] Connection check: ${connectedRelays.length}/${nostrClient.relays.length} relays connected`);
+      broadcastToAll({ type: 'CONNECTION_STATUS', connected });
+    } else {
+      console.log('[Background] Connection check: nostrClient not initialized');
+    }
+  };
+
+  // Check connection status initially and periodically
+  setTimeout(checkConnectionStatus, 1000); // Check after 1 second for initial connection
+  setInterval(checkConnectionStatus, 5000); // Then check every 5 seconds
+
   return nostrClient;
 }
 
@@ -189,7 +206,10 @@ async function joinChannel(url) {
 
 // Broadcast message to all extension pages (dashboard)
 async function broadcastToAll(message) {
-  chrome.runtime.sendMessage(message).catch(() => {});
+  console.log('[Background] Broadcasting message:', message);
+  chrome.runtime.sendMessage(message).catch((err) => {
+    console.log('[Background] Broadcast error (normal if no listeners):', err?.message);
+  });
 }
 
 // Open dashboard tab when extension icon is clicked
@@ -241,6 +261,14 @@ async function handleMessage(request, sender) {
         // Initialize client with new key
         await initClient(privateKey);
 
+        // Send connection status after a brief delay to allow relays to connect
+        setTimeout(() => {
+          if (nostrClient && nostrClient.relays) {
+            const connected = nostrClient.relays.some(r => r.connected);
+            broadcastToAll({ type: 'CONNECTION_STATUS', connected });
+          }
+        }, 2000);
+
         return { success: true, publicKey };
       } catch (error) {
         return { success: false, error: error.message };
@@ -262,6 +290,14 @@ async function handleMessage(request, sender) {
         // Initialize client with imported key
         await initClient(parsed.privateKey);
 
+        // Send connection status after a brief delay to allow relays to connect
+        setTimeout(() => {
+          if (nostrClient && nostrClient.relays) {
+            const connected = nostrClient.relays.some(r => r.connected);
+            broadcastToAll({ type: 'CONNECTION_STATUS', connected });
+          }
+        }, 2000);
+
         return { success: true, publicKey };
       } catch (error) {
         return { success: false, error: 'Invalid private key' };
@@ -273,37 +309,39 @@ async function handleMessage(request, sender) {
       return result;
     }
 
+    case 'JOIN_ROOM': {
+      if (!nostrClient) {
+        return { error: 'Not connected' };
+      }
+      const result = await nostrClient.joinRoom(request.roomContext);
+      currentChannelUrl = request.roomContext.website || null;
+      return result;
+    }
+
     case 'SEND_MESSAGE': {
       if (!nostrClient) {
         return { error: 'Not connected' };
       }
-      // If url is provided, use it (for profile walls), otherwise use current channel
-      const targetUrl = request.url || currentChannelUrl;
-      const event = await nostrClient.sendMessage(request.content, targetUrl);
-      return { success: !!event, eventId: event?.id };
+      // Support both old and new format
+      if (request.roomContext || request.tags) {
+        // New universal format
+        const event = await nostrClient.sendEnhancedMessage(request.content, {
+          website: request.roomContext?.website || request.url || currentChannelUrl,
+          users: request.roomContext?.users || request.taggedUsers || [],
+          subject: request.roomContext?.subject,
+          mentions: request.mentions || [],
+          replyTo: request.replyTo,
+          media: request.media || []
+        });
+        return { success: !!event, eventId: event?.id };
+      } else {
+        // Old format for backward compatibility
+        const targetUrl = request.url || currentChannelUrl;
+        const event = await nostrClient.sendMessage(request.content, targetUrl);
+        return { success: !!event, eventId: event?.id };
+      }
     }
 
-    case 'POST_TO_WALL': {
-      if (!nostrClient) {
-        return { error: 'Not connected' };
-      }
-      // Post to someone's wall using their pubkey as the address
-      const event = await nostrClient.postToWall(request.targetPubkey, request.content);
-      return { success: !!event, eventId: event?.id };
-    }
-
-    case 'FETCH_WALL_POSTS': {
-      if (!nostrClient) {
-        return { posts: [], error: 'Not connected' };
-      }
-      try {
-        const posts = await nostrClient.fetchWallPosts(request.targetPubkey, request.limit || 50);
-        return { posts };
-      } catch (error) {
-        console.error('Failed to fetch wall posts:', error);
-        return { posts: [], error: error.message };
-      }
-    }
 
     case 'FETCH_MENTIONS': {
       if (!nostrClient) {
@@ -335,8 +373,29 @@ async function handleMessage(request, sender) {
       if (!nostrClient) {
         return { error: 'Not connected' };
       }
-      const event = await nostrClient.sendDM(request.recipientPubkey, request.content);
+      // Enhanced DM using universal room system with user tags
+      const event = await nostrClient.sendEnhancedMessage(request.content, {
+        users: [request.targetPubkey], // Create a room with just this user
+        mentions: []
+      });
       return { success: !!event, eventId: event?.id };
+    }
+
+    case 'FETCH_DMS': {
+      if (!nostrClient) {
+        return { messages: [], error: 'Not connected' };
+      }
+      try {
+        // Fetch messages in a room context with specific user
+        const messages = await nostrClient.fetchRoomMessages({
+          users: [request.otherPubkey, nostrClient.publicKey],
+          strict: true // Must have both users tagged
+        });
+        return { messages };
+      } catch (error) {
+        console.error('Failed to fetch DMs:', error);
+        return { messages: [], error: error.message };
+      }
     }
 
     case 'GET_DM_CONVERSATIONS': {
@@ -351,6 +410,19 @@ async function handleMessage(request, sender) {
       };
     }
 
+    case 'FETCH_FOLLOWING': {
+      if (!nostrClient) {
+        return { following: [], error: 'Not connected' };
+      }
+      try {
+        const following = await nostrClient.fetchFollowing(request.targetPubkey);
+        return { following };
+      } catch (error) {
+        console.error('Failed to fetch following:', error);
+        return { following: [], error: error.message };
+      }
+    }
+
     case 'SET_USERNAME': {
       userName = request.name;
       await chrome.storage.local.set({ userName });
@@ -361,8 +433,17 @@ async function handleMessage(request, sender) {
     }
 
     case 'GET_STATUS': {
+      const connected = nostrClient?.relays?.some(r => r.connected) || false;
+
+      // Also broadcast the current connection status
+      if (nostrClient) {
+        setTimeout(() => {
+          broadcastToAll({ type: 'CONNECTION_STATUS', connected });
+        }, 100);
+      }
+
       return {
-        connected: nostrClient?.relays.some(r => r.connected) || false,
+        connected: connected,
         channelId: nostrClient?.currentChannelId || null,
         url: currentChannelUrl,
         users: nostrClient?.getActiveUsers() || [],
@@ -459,6 +540,42 @@ async function handleMessage(request, sender) {
       }
     }
 
+    case 'CHECK_MUTUAL_FOLLOWS': {
+      // Check if given pubkeys are mutual follows (friends)
+      // request.pubkeys is an array of pubkeys to check
+      if (!nostrClient) {
+        return { mutualFollows: {}, error: 'Not connected' };
+      }
+      try {
+        const pubkeys = request.pubkeys || [];
+        const myPubkey = nostrClient.publicKey;
+        const mutualFollows = {};
+
+        // Get my following list first
+        const myFollowing = await nostrClient.fetchContactList(myPubkey);
+        const myFollowingSet = new Set(myFollowing.map(c => c.pubkey));
+
+        // For each pubkey, check if they follow me back
+        for (const pubkey of pubkeys) {
+          // I need to follow them AND they need to follow me
+          const iFollow = myFollowingSet.has(pubkey);
+          if (iFollow) {
+            // Check if they follow me
+            const theirFollowing = await nostrClient.fetchContactList(pubkey);
+            const theyFollowMe = theirFollowing.some(c => c.pubkey === myPubkey);
+            mutualFollows[pubkey] = theyFollowMe;
+          } else {
+            mutualFollows[pubkey] = false;
+          }
+        }
+
+        return { mutualFollows };
+      } catch (error) {
+        console.error('Failed to check mutual follows:', error);
+        return { mutualFollows: {}, error: error.message };
+      }
+    }
+
     case 'FETCH_USER_METADATA': {
       if (!nostrClient) {
         return { metadata: null, error: 'Not connected' };
@@ -469,6 +586,86 @@ async function handleMessage(request, sender) {
       } catch (error) {
         console.error('Failed to fetch user metadata:', error);
         return { metadata: null, error: error.message };
+      }
+    }
+
+    case 'DISCOVER_ROOMS': {
+      if (!nostrClient) {
+        return { rooms: null, error: 'Not connected' };
+      }
+      try {
+        const rooms = await nostrClient.discoverRooms();
+        return { rooms };
+      } catch (error) {
+        console.error('Failed to discover rooms:', error);
+        return { rooms: null, error: error.message };
+      }
+    }
+
+    case 'FETCH_ROOM_MESSAGES': {
+      if (!nostrClient) {
+        return { messages: [], error: 'Not connected' };
+      }
+      try {
+        const messages = await nostrClient.fetchRoomMessages(
+          request.roomContext,
+          request.limit || 100
+        );
+        return { messages };
+      } catch (error) {
+        console.error('Failed to fetch room messages:', error);
+        return { messages: [], error: error.message };
+      }
+    }
+
+    case 'SEND_ROOM_MESSAGE': {
+      if (!nostrClient) {
+        return { success: false, error: 'Not connected' };
+      }
+      try {
+        // Send message with universal room context (users are tagged)
+        const event = await nostrClient.sendEnhancedMessage(request.content, {
+          users: request.roomContext?.users || [],
+          strict: request.roomContext?.strict,
+          website: request.roomContext?.website,
+          subject: request.roomContext?.subject
+        });
+        return { success: !!event, eventId: event?.id };
+      } catch (error) {
+        console.error('Failed to send room message:', error);
+        return { success: false, error: error.message };
+      }
+    }
+
+    case 'POST_TO_WALL': {
+      if (!nostrClient) {
+        return { error: 'Not connected' };
+      }
+      try {
+        const event = await nostrClient.postToWall(
+          request.targetPubkey,
+          request.content
+        );
+        return { success: !!event, eventId: event?.id };
+      } catch (error) {
+        console.error('Failed to post to wall:', error);
+        return { success: false, error: error.message };
+      }
+    }
+
+    case 'FETCH_WALL_POSTS': {
+      if (!nostrClient) {
+        return { posts: [], error: 'Not connected' };
+      }
+      try {
+        const posts = await nostrClient.fetchWallPosts(
+          request.userPubkey,
+          request.limit || 50
+        );
+        return { posts };
+      } catch (error) {
+        console.error('Failed to fetch wall posts:', error);
+        return { posts: [], error: error.message };
       }
     }
 

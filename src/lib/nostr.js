@@ -46,7 +46,7 @@ function sha256Bytes(bytes) {
 }
 
 // Create and sign a Nostr event
-async function createEvent(privateKey, kind, content, tags = []) {
+export async function createEvent(privateKey, kind, content, tags = []) {
   const pubkey = getPublicKey(privateKey);
   const created_at = Math.floor(Date.now() / 1000);
 
