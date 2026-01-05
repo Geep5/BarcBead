@@ -1854,6 +1854,10 @@ class BarcDashboard {
   }
 
   getHostname(url) {
+    // Handle tag URLs like "tag:general"
+    if (url && url.startsWith('tag:')) {
+      return '#' + url.substring(4);
+    }
     try {
       return new URL(url).hostname;
     } catch {
